@@ -36,6 +36,16 @@ function parameterNodeDefinition(parameter: ParameterMetadata): NodeDefinition {
   };
 }
 
+function parameters(...ids: string[]): readonly ParameterMetadata[] {
+  const byId = new Map(
+    WISPY_SMOKE_PARAMETER_METADATA.map((parameter) => [parameter.id, parameter]),
+  );
+  return ids.flatMap((id) => {
+    const parameter = byId.get(id);
+    return parameter ? [parameter] : [];
+  });
+}
+
 export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
   {
     type: "output.three-webgpu",
@@ -65,6 +75,7 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     defaultParameters: {
       radius: 0.38,
     },
+    parameterMetadata: parameters("spawnRate", "lifetime", "radius", "height"),
   },
   {
     type: "noise.curl",
@@ -77,6 +88,7 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
       { id: "curlStrength", label: "Curl", direction: "input", type: "float", required: true },
       { id: "field", label: "Field", direction: "output", type: "field", multiple: true },
     ],
+    parameterMetadata: parameters("turbulence", "curlStrength"),
   },
   {
     type: "force.buoyancy",
@@ -90,6 +102,7 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
       { id: "wind", label: "Wind", direction: "input", type: "vec3" },
       { id: "force", label: "Force", direction: "output", type: "force", multiple: true },
     ],
+    parameterMetadata: parameters("riseSpeed", "wind"),
   },
   {
     type: "simulation.advection",
@@ -104,9 +117,22 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
       { id: "force", label: "Force", direction: "input", type: "force", required: true },
       { id: "field", label: "Field", direction: "input", type: "field", required: true },
       { id: "density", label: "Density", direction: "input", type: "float", required: true },
-      { id: "dissipation", label: "Dissipation", direction: "input", type: "float", required: true },
-      { id: "simulation", label: "Simulation", direction: "output", type: "simulation", multiple: true },
+      {
+        id: "dissipation",
+        label: "Dissipation",
+        direction: "input",
+        type: "float",
+        required: true,
+      },
+      {
+        id: "simulation",
+        label: "Simulation",
+        direction: "output",
+        type: "simulation",
+        multiple: true,
+      },
     ],
+    parameterMetadata: parameters("density", "dissipation", "seed"),
   },
   {
     type: "render.volume",
@@ -117,12 +143,19 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     ports: [
       flowIn,
       flowOut,
-      { id: "simulation", label: "Simulation", direction: "input", type: "simulation", required: true },
+      {
+        id: "simulation",
+        label: "Simulation",
+        direction: "input",
+        type: "simulation",
+        required: true,
+      },
       { id: "color", label: "Color", direction: "input", type: "color", required: true },
       { id: "opacity", label: "Opacity", direction: "input", type: "float", required: true },
       { id: "softness", label: "Soft", direction: "input", type: "float", required: true },
       { id: "render", label: "Render", direction: "output", type: "render", multiple: true },
     ],
+    parameterMetadata: parameters("size", "opacity", "softness", "color", "warmGlow"),
   },
   {
     type: "transform.object",
@@ -132,8 +165,15 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     description: "Places the generated effect object in world space.",
     ports: [
       { id: "position", label: "Position", direction: "input", type: "vec3" },
-      { id: "transform", label: "Transform", direction: "output", type: "transform", multiple: true },
+      {
+        id: "transform",
+        label: "Transform",
+        direction: "output",
+        type: "transform",
+        multiple: true,
+      },
     ],
+    parameterMetadata: parameters("worldPosition"),
   },
   {
     type: "quality.preset",
@@ -145,6 +185,7 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
       { id: "quality", label: "Quality", direction: "input", type: "quality", required: true },
       { id: "preset", label: "Preset", direction: "output", type: "quality", multiple: true },
     ],
+    parameterMetadata: parameters("quality"),
   },
   ...WISPY_SMOKE_PARAMETER_METADATA.map(parameterNodeDefinition),
 ];

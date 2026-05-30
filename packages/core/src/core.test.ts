@@ -53,6 +53,16 @@ describe("@threefx/core", () => {
     expect(registry.get("noise.curl")?.ports.some((port) => port.id === "field")).toBe(true);
   });
 
+  it("attaches editable parameter metadata to composer nodes", () => {
+    const registry = createNodeRegistry();
+    expect(
+      registry.get("emitter.volume")?.parameterMetadata?.map((parameter) => parameter.id),
+    ).toEqual(expect.arrayContaining(["spawnRate", "lifetime", "radius", "height"]));
+    expect(
+      registry.get("render.volume")?.parameterMetadata?.map((parameter) => parameter.id),
+    ).toEqual(expect.arrayContaining(["size", "opacity", "softness", "color", "warmGlow"]));
+  });
+
   it("compiles deterministic Effect IR", () => {
     const graph = createWispySmokeGraph();
     const first = compileGraphToIR(graph);
@@ -66,8 +76,8 @@ describe("@threefx/core", () => {
     expect(WISPY_SMOKE_PARAMETER_METADATA.map((parameter) => parameter.id)).toEqual(
       expect.arrayContaining(["spawnRate", "lifetime", "density", "color", "quality"]),
     );
-    expect(WISPY_SMOKE_PARAMETER_METADATA.find((parameter) => parameter.id === "spawnRate")?.type).toBe(
-      "float",
-    );
+    expect(
+      WISPY_SMOKE_PARAMETER_METADATA.find((parameter) => parameter.id === "spawnRate")?.type,
+    ).toBe("float");
   });
 });

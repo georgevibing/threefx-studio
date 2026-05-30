@@ -5,6 +5,7 @@ import {
   Handle,
   Position,
   ReactFlow,
+  SelectionMode,
   useReactFlow,
   type Connection,
   type Edge,
@@ -19,17 +20,22 @@ import {
   ChevronRight,
   ChevronsDownUp,
   ChevronsUpDown,
+  CircleAlert,
   Clipboard,
   Copy,
   Download,
   FileDown,
   FolderOpen,
+  Keyboard,
   Plus,
+  Redo2,
   RotateCcw,
   Save,
   Trash2,
+  Undo2,
   Upload,
   WandSparkles,
+  X,
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
@@ -43,6 +49,7 @@ import {
   serializeGraphDocument,
   toGraphEdgeId,
   validateGraphDocument,
+  type Diagnostic,
   type GraphDocument,
   type GraphEdge,
   type GraphNode,
@@ -89,6 +96,18 @@ type AutoLayoutNodeSize = {
   readonly height: number;
 };
 
+type EditorSnapshot = {
+  readonly graph: GraphDocument;
+  readonly selectedEdgeIds: readonly string[];
+  readonly selectedNodeIds: readonly string[];
+  readonly status: string;
+};
+
+type PreviewTelemetry = PreviewPerformanceStats & {
+  readonly webgpuSupported: boolean;
+  readonly webgpuLabel: string;
+};
+
 type NodeMenuState = {
   readonly nodeId: string;
   readonly x: number;
@@ -102,6 +121,9 @@ const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
   frameMs: 0,
   maxParticles: 0,
 };
+const HISTORY_LIMIT = 100;
+const QUICK_ADD_WIDTH = 280;
+const QUICK_ADD_ANCHOR_Y = 42;
 const AUTO_LAYOUT_NODE_WIDTH = 260;
 const AUTO_LAYOUT_RANK_HORIZONTAL_GAP = 160;
 const AUTO_LAYOUT_NODE_VERTICAL_GAP = 42;
@@ -285,6 +307,46 @@ function clientPoint(event: MouseEvent | TouchEvent): { x: number; y: number } |
     return { x: event.clientX, y: event.clientY };
   }
   return null;
+}
+
+function isApplePlatform(): boolean {
+  return (
+    /Mac|iPhone|iPad|iPod/i.test(navigator.platform) ||
+    /Mac OS|iPhone|iPad|iPod/i.test(navigator.userAgent)
+  );
+}
+
+function isEditableEventTarget(target: EventTarget | null): boolean {
+  if (
+    target instanceof HTMLInputElement ||
+    target instanceof HTMLTextAreaElement ||
+    target instanceof HTMLSelectElement
+  ) {
+    return true;
+  }
+  return target instanceof HTMLElement && target.isContentEditable;
+}
+
+function isPrimaryModifierPressed(
+  event: Pick<KeyboardEvent | React.KeyboardEvent, "ctrlKey" | "metaKey">,
+  isApple: boolean,
+): boolean {
+  return isApple ? event.metaKey : event.ctrlKey;
+}
+
+function shortcutModifierLabel(isApple: boolean): string {
+  return isApple ? "Cmd" : "Ctrl";
+}
+
+function shortcutLabel(isApple: boolean, ...parts: readonly string[]): string {
+  return parts.map((part) => (part === "Mod" ? shortcutModifierLabel(isApple) : part)).join(" + ");
+}
+
+function consumeShortcutEvent(
+  event: Pick<KeyboardEvent | React.KeyboardEvent, "preventDefault" | "stopPropagation">,
+): void {
+  event.preventDefault();
+  event.stopPropagation();
 }
 
 function nodeHasCompatibleInput(definition: NodeDefinition, sourcePort: PortDefinition): boolean {
@@ -659,6 +721,78 @@ function getQuickAddEntrySubtitle(
   return definition.category;
 }
 
+function getPortFlowPoint(
+  graph: GraphDocument,
+  nodeId: string,
+  portId: string,
+  measuredSizes: ReadonlyMap<string, AutoLayoutNodeSize>,
+): { readonly x: number; readonly y: number; readonly direction: "input" | "output" } | null {
+  const node = graph.nodes.find((entry) => entry.id === nodeId);
+  const definition = node ? defaultNodeRegistry.get(node.type) : null;
+  const port = node ? findNodePort(node, portId) : null;
+  if (!node || !definition || !port) {
+    return null;
+  }
+  const sidePorts = definition.ports.filter((entry) => entry.direction === port.direction);
+  const index = Math.max(
+    0,
+    sidePorts.findIndex((entry) => entry.id === portId),
+  );
+  const size = measuredSizes.get(nodeId) ?? estimateAutoLayoutNodeSize(node, definition);
+  return {
+    x: node.position[0] + (port.direction === "output" ? size.width : 0),
+    y: node.position[1] + 50 + index * 24,
+    direction: port.direction,
+  };
+}
+
+function bezierPath(
+  source: { readonly x: number; readonly y: number },
+  target: { readonly x: number; readonly y: number },
+): string {
+  const controlDistance = Math.max(80, Math.abs(target.x - source.x) * 0.42);
+  const sourceControl = { x: source.x + controlDistance, y: source.y };
+  const targetControl = { x: target.x - controlDistance, y: target.y };
+  return `M ${source.x} ${source.y} C ${sourceControl.x} ${sourceControl.y}, ${targetControl.x} ${targetControl.y}, ${target.x} ${target.y}`;
+}
+
+function getPendingQuickAddPath({
+  bounds,
+  flowToScreenPosition,
+  graph,
+  measuredSizes,
+  quickAdd,
+}: {
+  readonly bounds: DOMRect | null;
+  readonly flowToScreenPosition: (position: { x: number; y: number }) => { x: number; y: number };
+  readonly graph: GraphDocument;
+  readonly measuredSizes: ReadonlyMap<string, AutoLayoutNodeSize>;
+  readonly quickAdd: QuickAddState | null;
+}): string | null {
+  if (!bounds || !quickAdd || quickAdd.mode.kind === "free") {
+    return null;
+  }
+  const portPoint = getPortFlowPoint(
+    graph,
+    quickAdd.mode.nodeId,
+    quickAdd.mode.portId,
+    measuredSizes,
+  );
+  if (!portPoint) {
+    return null;
+  }
+  const portScreenPoint = flowToScreenPosition({ x: portPoint.x, y: portPoint.y });
+  const popoverAnchor =
+    quickAdd.mode.kind === "fromOutput"
+      ? { x: quickAdd.screen.x, y: quickAdd.screen.y + QUICK_ADD_ANCHOR_Y }
+      : { x: quickAdd.screen.x + QUICK_ADD_WIDTH, y: quickAdd.screen.y + QUICK_ADD_ANCHOR_Y };
+  const port = { x: portScreenPoint.x - bounds.left, y: portScreenPoint.y - bounds.top };
+  const popover = { x: popoverAnchor.x - bounds.left, y: popoverAnchor.y - bounds.top };
+  return quickAdd.mode.kind === "fromOutput"
+    ? bezierPath(port, popover)
+    : bezierPath(popover, port);
+}
+
 function nodeSelectionChanges(changes: readonly NodeChange<FlowNode>[]) {
   return changes.filter(
     (
@@ -691,16 +825,109 @@ function App() {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null);
   const [isMiddlePanning, setIsMiddlePanning] = useState(false);
+  const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
+  const [historyRevision, setHistoryRevision] = useState(0);
+  const [canvasBounds, setCanvasBounds] = useState<DOMRect | null>(null);
+  const [previewTelemetry, setPreviewTelemetry] = useState<PreviewTelemetry>({
+    ...EMPTY_PREVIEW_STATS,
+    webgpuLabel: "Checking",
+    webgpuSupported: false,
+  });
   const [status, setStatus] = useState("Ready");
+  const [isApple] = useState(() => isApplePlatform());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canvasPanelRef = useRef<HTMLDivElement | null>(null);
+  const pendingMoveSnapshotRef = useRef<EditorSnapshot | null>(null);
   const suppressNextNodeSelectionChangeRef = useRef(false);
   const suppressNextPaneClickRef = useRef(false);
-  const { fitView, getNodes, screenToFlowPosition } = useReactFlow<FlowNode, FlowEdge>();
+  const undoStackRef = useRef<EditorSnapshot[]>([]);
+  const redoStackRef = useRef<EditorSnapshot[]>([]);
+  const { fitView, flowToScreenPosition, getNodes, screenToFlowPosition } = useReactFlow<
+    FlowNode,
+    FlowEdge
+  >();
+  const canUndo = historyRevision >= 0 && undoStackRef.current.length > 0;
+  const canRedo = historyRevision >= 0 && redoStackRef.current.length > 0;
 
-  const updateGraph = useCallback((updater: (current: GraphDocument) => GraphDocument) => {
-    setGraph((current) => updater(current));
+  const createSnapshot = useCallback(
+    (sourceGraph: GraphDocument = graph): EditorSnapshot => ({
+      graph: sourceGraph,
+      selectedEdgeIds: [...selectedEdgeIds],
+      selectedNodeIds: [...selectedNodeIds],
+      status,
+    }),
+    [graph, selectedEdgeIds, selectedNodeIds, status],
+  );
+
+  const pushUndoSnapshot = useCallback((snapshot: EditorSnapshot) => {
+    undoStackRef.current.push(snapshot);
+    if (undoStackRef.current.length > HISTORY_LIMIT) {
+      undoStackRef.current.splice(0, undoStackRef.current.length - HISTORY_LIMIT);
+    }
+    redoStackRef.current = [];
+    setHistoryRevision((revision) => revision + 1);
   }, []);
+
+  const restoreSnapshot = useCallback((snapshot: EditorSnapshot) => {
+    pendingMoveSnapshotRef.current = null;
+    setGraph(snapshot.graph);
+    setSelectedNodeIds(new Set(snapshot.selectedNodeIds));
+    setSelectedEdgeIds(new Set(snapshot.selectedEdgeIds));
+    setStatus(snapshot.status);
+    setQuickAdd(null);
+    setNodeMenu(null);
+  }, []);
+
+  const commitGraphChange = useCallback(
+    (
+      updater: (current: GraphDocument) => GraphDocument,
+      options: {
+        readonly nextSelectedEdgeIds?: readonly string[];
+        readonly nextSelectedNodeIds?: readonly string[];
+        readonly status?: string;
+      } = {},
+    ): boolean => {
+      const nextGraph = updater(graph);
+      if (nextGraph === graph) {
+        return false;
+      }
+      pushUndoSnapshot(createSnapshot(graph));
+      setGraph(nextGraph);
+      if (options.nextSelectedNodeIds) {
+        setSelectedNodeIds(new Set(options.nextSelectedNodeIds));
+      }
+      if (options.nextSelectedEdgeIds) {
+        setSelectedEdgeIds(new Set(options.nextSelectedEdgeIds));
+      }
+      if (options.status) {
+        setStatus(options.status);
+      }
+      return true;
+    },
+    [createSnapshot, graph, pushUndoSnapshot],
+  );
+
+  const undoEdit = useCallback(() => {
+    const snapshot = undoStackRef.current.pop();
+    if (!snapshot) {
+      return;
+    }
+    redoStackRef.current.push(createSnapshot(graph));
+    restoreSnapshot(snapshot);
+    setStatus("Undo");
+    setHistoryRevision((revision) => revision + 1);
+  }, [createSnapshot, graph, restoreSnapshot]);
+
+  const redoEdit = useCallback(() => {
+    const snapshot = redoStackRef.current.pop();
+    if (!snapshot) {
+      return;
+    }
+    undoStackRef.current.push(createSnapshot(graph));
+    restoreSnapshot(snapshot);
+    setStatus("Redo");
+    setHistoryRevision((revision) => revision + 1);
+  }, [createSnapshot, graph, restoreSnapshot]);
 
   const addNode = useCallback(
     (
@@ -712,101 +939,134 @@ function App() {
       if (!definition) {
         return;
       }
-      updateGraph((current) => {
-        const id = createUniqueNodeId(type, current.nodes);
-        const node = defaultNodeRegistry.instantiate(type, id, [position.x, position.y]);
-        const nextEdges = [...current.edges];
+      const id = createUniqueNodeId(type, graph.nodes);
+      commitGraphChange(
+        (current) => {
+          const node = defaultNodeRegistry.instantiate(type, id, [position.x, position.y]);
+          const nextEdges = [...current.edges];
 
-        if (connectMode.kind === "fromOutput") {
-          const sourceNode = current.nodes.find((entry) => entry.id === connectMode.nodeId);
-          const sourcePort = sourceNode ? findNodePort(sourceNode, connectMode.portId) : null;
-          const targetPort = sourcePort ? firstCompatibleInput(definition, sourcePort) : null;
-          if (targetPort) {
-            nextEdges.push({
-              id: toGraphEdgeId({
+          if (connectMode.kind === "fromOutput") {
+            const sourceNode = current.nodes.find((entry) => entry.id === connectMode.nodeId);
+            const sourcePort = sourceNode ? findNodePort(sourceNode, connectMode.portId) : null;
+            const targetPort = sourcePort ? firstCompatibleInput(definition, sourcePort) : null;
+            if (targetPort) {
+              nextEdges.push({
+                id: toGraphEdgeId({
+                  source: connectMode.nodeId,
+                  sourcePort: connectMode.portId,
+                  target: id,
+                  targetPort: targetPort.id,
+                }),
                 source: connectMode.nodeId,
                 sourcePort: connectMode.portId,
                 target: id,
                 targetPort: targetPort.id,
-              }),
-              source: connectMode.nodeId,
-              sourcePort: connectMode.portId,
-              target: id,
-              targetPort: targetPort.id,
-            });
-          }
-        } else if (connectMode.kind === "fromInput") {
-          const targetNode = current.nodes.find((entry) => entry.id === connectMode.nodeId);
-          const targetPort = targetNode ? findNodePort(targetNode, connectMode.portId) : null;
-          const sourcePort = targetPort ? firstCompatibleOutput(definition, targetPort) : null;
-          if (sourcePort) {
-            nextEdges.push({
-              id: toGraphEdgeId({
+              });
+            }
+          } else if (connectMode.kind === "fromInput") {
+            const targetNode = current.nodes.find((entry) => entry.id === connectMode.nodeId);
+            const targetPort = targetNode ? findNodePort(targetNode, connectMode.portId) : null;
+            const sourcePort = targetPort ? firstCompatibleOutput(definition, targetPort) : null;
+            if (sourcePort) {
+              nextEdges.push({
+                id: toGraphEdgeId({
+                  source: id,
+                  sourcePort: sourcePort.id,
+                  target: connectMode.nodeId,
+                  targetPort: connectMode.portId,
+                }),
                 source: id,
                 sourcePort: sourcePort.id,
                 target: connectMode.nodeId,
                 targetPort: connectMode.portId,
-              }),
-              source: id,
-              sourcePort: sourcePort.id,
-              target: connectMode.nodeId,
-              targetPort: connectMode.portId,
-            });
+              });
+            }
           }
-        }
 
-        return {
-          ...current,
-          nodes: [...current.nodes, node],
-          edges: nextEdges,
-        };
-      });
-      setSelectedNodeIds(new Set([createUniqueNodeId(type, graph.nodes)]));
-      setSelectedEdgeIds(new Set());
+          return {
+            ...current,
+            nodes: [...current.nodes, node],
+            edges: nextEdges,
+          };
+        },
+        { nextSelectedEdgeIds: [], nextSelectedNodeIds: [id], status: `Added ${definition.label}` },
+      );
       setQuickAdd(null);
       setNodeMenu(null);
     },
-    [graph.nodes, updateGraph],
+    [commitGraphChange, graph.nodes],
   );
 
   const deleteSelection = useCallback(() => {
-    updateGraph((current) => {
-      const nodeIds = selectedNodeIds;
-      const edgeIds = selectedEdgeIds;
-      return {
+    if (selectedNodeIds.size === 0 && selectedEdgeIds.size === 0) {
+      return;
+    }
+    const nodeIds = selectedNodeIds;
+    const edgeIds = selectedEdgeIds;
+    commitGraphChange(
+      (current) => ({
         ...current,
         nodes: current.nodes.filter((node) => !nodeIds.has(node.id)),
         edges: current.edges.filter(
           (edge) => !edgeIds.has(edge.id) && !nodeIds.has(edge.source) && !nodeIds.has(edge.target),
         ),
-      };
-    });
-    setSelectedNodeIds(new Set());
-    setSelectedEdgeIds(new Set());
+      }),
+      { nextSelectedEdgeIds: [], nextSelectedNodeIds: [], status: "Deleted selection" },
+    );
     setNodeMenu(null);
-  }, [selectedEdgeIds, selectedNodeIds, updateGraph]);
+  }, [commitGraphChange, selectedEdgeIds, selectedNodeIds]);
 
   const duplicateSelected = useCallback(() => {
-    const node = graph.nodes.find((entry) => selectedNodeIds.has(entry.id));
-    if (!node) {
+    const selectedNodes = graph.nodes.filter((entry) => selectedNodeIds.has(entry.id));
+    if (selectedNodes.length === 0) {
       return;
     }
-    const id = createUniqueNodeId(node.type, graph.nodes);
-    const copy: GraphNode = {
-      ...node,
-      id,
-      label: `${node.label} Copy`,
-      position: [node.position[0] + 32, node.position[1] + 32],
-    };
-    updateGraph((current) => ({ ...current, nodes: [...current.nodes, copy] }));
-    setSelectedNodeIds(new Set([id]));
-    setSelectedEdgeIds(new Set());
+    const idMap = new Map<string, string>();
+    const existingNodes = [...graph.nodes];
+    const copiedNodes = selectedNodes.map((node) => {
+      const id = createUniqueNodeId(node.type, existingNodes);
+      idMap.set(node.id, id);
+      const copy: GraphNode = {
+        ...node,
+        id,
+        label: selectedNodes.length === 1 ? `${node.label} Copy` : node.label,
+        position: [node.position[0] + 36, node.position[1] + 36],
+      };
+      existingNodes.push(copy);
+      return copy;
+    });
+    const copiedEdges = graph.edges.flatMap((edge) => {
+      const source = idMap.get(edge.source);
+      const target = idMap.get(edge.target);
+      if (!source || !target) {
+        return [];
+      }
+      const nextEdge = {
+        source,
+        sourcePort: edge.sourcePort,
+        target,
+        targetPort: edge.targetPort,
+      };
+      return [{ id: toGraphEdgeId(nextEdge), ...nextEdge }];
+    });
+    commitGraphChange(
+      (current) => ({
+        ...current,
+        nodes: [...current.nodes, ...copiedNodes],
+        edges: [...current.edges, ...copiedEdges],
+      }),
+      {
+        nextSelectedEdgeIds: [],
+        nextSelectedNodeIds: copiedNodes.map((node) => node.id),
+        status: selectedNodes.length === 1 ? "Duplicated node" : "Duplicated nodes",
+      },
+    );
     setNodeMenu(null);
-  }, [graph.nodes, selectedNodeIds, updateGraph]);
+  }, [commitGraphChange, graph.edges, graph.nodes, selectedNodeIds]);
 
   const updateParameter = useCallback(
     (id: string, value: ParameterValue) => {
-      updateGraph((current) => ({
+      commitGraphChange((current) => ({
         ...current,
         parameters: { ...current.parameters, [id]: value },
         nodes: current.nodes.map((node) => {
@@ -827,7 +1087,7 @@ function App() {
         }),
       }));
     },
-    [updateGraph],
+    [commitGraphChange],
   );
 
   const validation = useMemo(() => validateGraphDocument(graph), [graph]);
@@ -853,18 +1113,20 @@ function App() {
       return;
     }
     const result = deserializeGraphDocument(saved);
-    setGraph(result.graph);
-    setSelectedNodeIds(new Set());
-    setSelectedEdgeIds(new Set());
-    setStatus(result.valid ? "Loaded local graph" : "Loaded graph with validation errors");
-  }, []);
+    commitGraphChange(() => result.graph, {
+      nextSelectedEdgeIds: [],
+      nextSelectedNodeIds: [],
+      status: result.valid ? "Loaded local graph" : "Loaded graph with validation errors",
+    });
+  }, [commitGraphChange]);
 
   const resetPreset = useCallback(() => {
-    setGraph(createWispySmokeGraph());
-    setSelectedNodeIds(new Set());
-    setSelectedEdgeIds(new Set());
-    setStatus("Loaded Wispy Smoke preset");
-  }, []);
+    commitGraphChange(() => createWispySmokeGraph(), {
+      nextSelectedEdgeIds: [],
+      nextSelectedNodeIds: [],
+      status: "Loaded Wispy Smoke preset",
+    });
+  }, [commitGraphChange]);
 
   const downloadJson = useCallback(() => {
     const blob = new Blob([serializeGraphDocument(graph)], { type: "application/json" });
@@ -876,18 +1138,22 @@ function App() {
     URL.revokeObjectURL(url);
   }, [graph]);
 
-  const importJson = useCallback((file: File) => {
-    const reader = new FileReader();
-    reader.addEventListener("load", () => {
-      const source = String(reader.result ?? "");
-      const result = deserializeGraphDocument(source);
-      setGraph(result.graph);
-      setSelectedNodeIds(new Set());
-      setSelectedEdgeIds(new Set());
-      setStatus(result.valid ? "Imported graph" : "Imported graph with validation errors");
-    });
-    reader.readAsText(file);
-  }, []);
+  const importJson = useCallback(
+    (file: File) => {
+      const reader = new FileReader();
+      reader.addEventListener("load", () => {
+        const source = String(reader.result ?? "");
+        const result = deserializeGraphDocument(source);
+        commitGraphChange(() => result.graph, {
+          nextSelectedEdgeIds: [],
+          nextSelectedNodeIds: [],
+          status: result.valid ? "Imported graph" : "Imported graph with validation errors",
+        });
+      });
+      reader.readAsText(file);
+    },
+    [commitGraphChange],
+  );
 
   const collectMeasuredNodeSizes = useCallback((): Map<string, AutoLayoutNodeSize> => {
     const sizes = new Map<string, AutoLayoutNodeSize>();
@@ -906,21 +1172,38 @@ function App() {
     return sizes;
   }, [getNodes]);
 
+  useEffect(() => {
+    const element = canvasPanelRef.current;
+    if (!element) {
+      return;
+    }
+    const updateBounds = () => setCanvasBounds(element.getBoundingClientRect());
+    updateBounds();
+    const observer = new ResizeObserver(updateBounds);
+    observer.observe(element);
+    window.addEventListener("resize", updateBounds);
+    return () => {
+      observer.disconnect();
+      window.removeEventListener("resize", updateBounds);
+    };
+  }, []);
+
   const autoLayoutGraph = useCallback(() => {
     if (graph.nodes.length === 0) {
       return;
     }
     const measuredSizes = collectMeasuredNodeSizes();
-    updateGraph((current) => autoLayoutGraphDocument(current, measuredSizes));
+    commitGraphChange((current) => autoLayoutGraphDocument(current, measuredSizes), {
+      status: "Auto layout applied",
+    });
     setQuickAdd(null);
     setNodeMenu(null);
-    setStatus("Auto layout applied");
     window.requestAnimationFrame(() => {
       window.requestAnimationFrame(() => {
         void fitView({ padding: 0.18, duration: 180 });
       });
     });
-  }, [collectMeasuredNodeSizes, fitView, graph.nodes.length, updateGraph]);
+  }, [collectMeasuredNodeSizes, commitGraphChange, fitView, graph.nodes.length]);
 
   const handleConnect = useCallback(
     (connection: Connection) => {
@@ -928,14 +1211,14 @@ function App() {
         return;
       }
       const edge = makeEdge(connection);
-      updateGraph((current) => {
+      commitGraphChange((current) => {
         if (current.edges.some((entry) => entry.id === edge.id)) {
           return current;
         }
         return { ...current, edges: [...current.edges, edge] };
       });
     },
-    [graph, updateGraph],
+    [commitGraphChange, graph],
   );
 
   const openQuickAddAt = useCallback(
@@ -1016,31 +1299,105 @@ function App() {
     }
   }, []);
 
+  const focusSelection = useCallback(() => {
+    const selectedNodeList = graph.nodes
+      .filter((node) => selectedNodeIds.has(node.id))
+      .map((node) => ({ id: node.id }));
+    const selectedEdgeNodeIds =
+      selectedNodeList.length > 0
+        ? []
+        : graph.edges
+            .filter((edge) => selectedEdgeIds.has(edge.id))
+            .flatMap((edge) => [{ id: edge.source }, { id: edge.target }]);
+    const nodes = selectedNodeList.length > 0 ? selectedNodeList : selectedEdgeNodeIds;
+    if (nodes.length === 0) {
+      return;
+    }
+    void fitView({ nodes, padding: 0.32, duration: 180, maxZoom: 1.15 });
+  }, [fitView, graph.edges, graph.nodes, selectedEdgeIds, selectedNodeIds]);
+
+  const selectAllNodes = useCallback(() => {
+    setSelectedNodeIds(new Set(graph.nodes.map((node) => node.id)));
+    setSelectedEdgeIds(new Set());
+    setQuickAdd(null);
+    setNodeMenu(null);
+  }, [graph.nodes]);
+
   const handleKeyDown = useCallback(
-    (event: React.KeyboardEvent) => {
-      const target = event.target;
+    (event: KeyboardEvent | React.KeyboardEvent) => {
+      if (event.defaultPrevented || isEditableEventTarget(event.target)) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      const primary = isPrimaryModifierPressed(event, isApple);
+      if (primary && key === "z" && !event.shiftKey) {
+        consumeShortcutEvent(event);
+        undoEdit();
+        return;
+      }
       if (
-        target instanceof HTMLInputElement ||
-        target instanceof HTMLTextAreaElement ||
-        target instanceof HTMLSelectElement
+        (primary && key === "z" && event.shiftKey) ||
+        (!isApple && event.ctrlKey && key === "y")
       ) {
+        consumeShortcutEvent(event);
+        redoEdit();
+        return;
+      }
+      if (primary && key === "a") {
+        consumeShortcutEvent(event);
+        selectAllNodes();
+        return;
+      }
+      if (primary && key === "d") {
+        consumeShortcutEvent(event);
+        duplicateSelected();
+        return;
+      }
+      if (primary && key === "s") {
+        consumeShortcutEvent(event);
+        saveLocal();
+        return;
+      }
+      if (key === "f") {
+        consumeShortcutEvent(event);
+        focusSelection();
+        return;
+      }
+      if (key === "?" || (event.shiftKey && key === "/")) {
+        consumeShortcutEvent(event);
+        setIsShortcutDialogOpen(true);
+        return;
+      }
+      if (event.key === "Escape") {
+        consumeShortcutEvent(event);
+        setQuickAdd(null);
+        setNodeMenu(null);
+        setIsShortcutDialogOpen(false);
         return;
       }
       if (event.key === "Delete" || event.key === "Backspace") {
-        event.preventDefault();
+        consumeShortcutEvent(event);
         deleteSelection();
-      }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "d") {
-        event.preventDefault();
-        duplicateSelected();
-      }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === "s") {
-        event.preventDefault();
-        saveLocal();
+        return;
       }
     },
-    [deleteSelection, duplicateSelected, saveLocal],
+    [
+      deleteSelection,
+      duplicateSelected,
+      focusSelection,
+      isApple,
+      redoEdit,
+      saveLocal,
+      selectAllNodes,
+      undoEdit,
+    ],
   );
+
+  useEffect(() => {
+    const onKeyDown = (event: KeyboardEvent) => handleKeyDown(event);
+    window.addEventListener("keydown", onKeyDown, true);
+    return () => window.removeEventListener("keydown", onKeyDown, true);
+  }, [handleKeyDown]);
 
   const suppressFlowSelectionEcho = useCallback(() => {
     suppressNextNodeSelectionChangeRef.current = true;
@@ -1078,7 +1435,11 @@ function App() {
       setSelectedNodeIds((current) => {
         if (event.ctrlKey || event.metaKey) {
           const next = new Set(current);
-          next.delete(node.id);
+          if (next.has(node.id)) {
+            next.delete(node.id);
+          } else {
+            next.add(node.id);
+          }
           return next;
         }
         if (event.shiftKey) {
@@ -1102,7 +1463,11 @@ function App() {
       setSelectedEdgeIds((current) => {
         if (event.ctrlKey || event.metaKey) {
           const next = new Set(current);
-          next.delete(edge.id);
+          if (next.has(edge.id)) {
+            next.delete(edge.id);
+          } else {
+            next.add(edge.id);
+          }
           return next;
         }
         if (event.shiftKey) {
@@ -1128,7 +1493,20 @@ function App() {
         } => change.type === "position" && "id" in change && Boolean(change.position),
       );
       if (positionChanges.length > 0) {
-        updateGraph((current) => ({
+        const isDragging = positionChanges.some(
+          (change) => (change as { readonly dragging?: boolean }).dragging,
+        );
+        if (isDragging && !pendingMoveSnapshotRef.current) {
+          pendingMoveSnapshotRef.current = createSnapshot(graph);
+        }
+        if (!isDragging && pendingMoveSnapshotRef.current) {
+          pushUndoSnapshot(pendingMoveSnapshotRef.current);
+          pendingMoveSnapshotRef.current = null;
+          setStatus("Moved nodes");
+        } else if (!isDragging) {
+          pushUndoSnapshot(createSnapshot(graph));
+        }
+        setGraph((current) => ({
           ...current,
           nodes: current.nodes.map((node) => {
             const change = positionChanges.find((entry) => entry.id === node.id);
@@ -1158,7 +1536,7 @@ function App() {
         suppressNextNodeSelectionChangeRef.current = false;
       }
     },
-    [updateGraph],
+    [createSnapshot, graph, pushUndoSnapshot],
   );
 
   const handleEdgesChange = useCallback((changes: EdgeChange<FlowEdge>[]) => {
@@ -1182,22 +1560,35 @@ function App() {
     }
   }, []);
 
+  const pendingQuickAddPath = useMemo(
+    () =>
+      getPendingQuickAddPath({
+        bounds: canvasBounds,
+        flowToScreenPosition,
+        graph,
+        measuredSizes: collectMeasuredNodeSizes(),
+        quickAdd,
+      }),
+    [canvasBounds, collectMeasuredNodeSizes, flowToScreenPosition, graph, quickAdd],
+  );
+
   const previewParams = graph.parameters as unknown as WispySmokeVFXParams;
 
   return (
-    <main className="app-shell" tabIndex={-1} onKeyDown={handleKeyDown}>
+    <main className="app-shell" tabIndex={-1}>
       <TopBar
         status={status}
-        nodeCount={graph.nodes.length}
-        edgeCount={graph.edges.length}
-        errorCount={validation.diagnostics.filter((entry) => entry.severity === "error").length}
-        exportReady={Boolean(compileResult.ir)}
         onSave={saveLocal}
         onLoad={loadLocal}
         onReset={resetPreset}
         onDownloadJson={downloadJson}
         onImportClick={() => fileInputRef.current?.click()}
         onAutoLayout={autoLayoutGraph}
+        onRedo={redoEdit}
+        onShowShortcuts={() => setIsShortcutDialogOpen(true)}
+        onUndo={undoEdit}
+        canRedo={canRedo}
+        canUndo={canUndo}
       />
       <input
         ref={fileInputRef}
@@ -1256,17 +1647,24 @@ function App() {
             onEdgeClick={handleEdgeClick}
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
+            deleteKeyCode={null}
             proOptions={{ hideAttribution: true }}
             nodesFocusable
             edgesFocusable
             autoPanOnNodeFocus
             elevateNodesOnSelect={false}
             panOnDrag={[1]}
-            selectionOnDrag={false}
+            selectionMode={SelectionMode.Partial}
+            selectionOnDrag
           >
             <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
             <Controls />
           </ReactFlow>
+          {pendingQuickAddPath ? (
+            <svg className="pending-quick-add-edge" aria-hidden="true">
+              <path d={pendingQuickAddPath} />
+            </svg>
+          ) : null}
           {quickAdd ? (
             <QuickAddPopover
               graph={graph}
@@ -1287,39 +1685,52 @@ function App() {
           ) : null}
         </div>
         <aside className="right-rail">
-          <PreviewViewport params={previewParams} />
-          <DiagnosticsPanel diagnostics={validation.diagnostics} />
+          <PreviewViewport params={previewParams} onTelemetry={setPreviewTelemetry} />
+          <PerformancePanel telemetry={previewTelemetry} />
+          <GraphStatusPanel
+            compileResult={compileResult}
+            diagnostics={validation.diagnostics}
+            edgeCount={graph.edges.length}
+            nodeCount={graph.nodes.length}
+          />
           <ExportPanel compileResult={compileResult} />
         </aside>
       </section>
+      <ShortcutDialog
+        isApple={isApple}
+        open={isShortcutDialogOpen}
+        onClose={() => setIsShortcutDialogOpen(false)}
+      />
     </main>
   );
 }
 
 function TopBar({
   status,
-  nodeCount,
-  edgeCount,
-  errorCount,
-  exportReady,
   onSave,
   onLoad,
   onReset,
   onDownloadJson,
   onImportClick,
   onAutoLayout,
+  onRedo,
+  onShowShortcuts,
+  onUndo,
+  canRedo,
+  canUndo,
 }: {
   readonly status: string;
-  readonly nodeCount: number;
-  readonly edgeCount: number;
-  readonly errorCount: number;
-  readonly exportReady: boolean;
   readonly onSave: () => void;
   readonly onLoad: () => void;
   readonly onReset: () => void;
   readonly onDownloadJson: () => void;
   readonly onImportClick: () => void;
   readonly onAutoLayout: () => void;
+  readonly onRedo: () => void;
+  readonly onShowShortcuts: () => void;
+  readonly onUndo: () => void;
+  readonly canRedo: boolean;
+  readonly canUndo: boolean;
 }) {
   return (
     <header className="topbar">
@@ -1330,20 +1741,19 @@ function TopBar({
           <span>{status}</span>
         </div>
       </div>
-      <div className="topbar-center" aria-label="Graph status">
-        <span className="status-pill">{nodeCount} nodes</span>
-        <span className="status-pill">{edgeCount} edges</span>
-        <span className="status-pill">
-          {errorCount === 0 ? "Graph valid" : `${errorCount} errors`}
-        </span>
-        <span className="status-pill">{exportReady ? "Export ready" : "Export blocked"}</span>
-      </div>
       <div className="topbar-actions">
         <IconButton title="Save" onClick={onSave} icon={<Save size={16} />} />
         <IconButton title="Load" onClick={onLoad} icon={<FolderOpen size={16} />} />
         <IconButton title="Import" onClick={onImportClick} icon={<Upload size={16} />} />
         <IconButton title="Download graph" onClick={onDownloadJson} icon={<FileDown size={16} />} />
+        <IconButton title="Undo" onClick={onUndo} icon={<Undo2 size={16} />} disabled={!canUndo} />
+        <IconButton title="Redo" onClick={onRedo} icon={<Redo2 size={16} />} disabled={!canRedo} />
         <IconButton title="Auto layout" onClick={onAutoLayout} icon={<WandSparkles size={16} />} />
+        <IconButton
+          title="Keyboard shortcuts"
+          onClick={onShowShortcuts}
+          icon={<Keyboard size={16} />}
+        />
         <IconButton title="Reset preset" onClick={onReset} icon={<RotateCcw size={16} />} />
       </div>
     </header>
@@ -1354,10 +1764,12 @@ function IconButton({
   title,
   onClick,
   icon,
+  disabled = false,
 }: {
   readonly title: string;
   readonly onClick: () => void;
   readonly icon: React.ReactNode;
+  readonly disabled?: boolean;
 }) {
   return (
     <button
@@ -1366,9 +1778,121 @@ function IconButton({
       title={title}
       aria-label={title}
       onClick={onClick}
+      disabled={disabled}
     >
       {icon}
     </button>
+  );
+}
+
+function ShortcutDialog({
+  isApple,
+  open,
+  onClose,
+}: {
+  readonly isApple: boolean;
+  readonly open: boolean;
+  readonly onClose: () => void;
+}) {
+  const shortcuts = [
+    {
+      action: "Undo",
+      description: "Previous graph edit",
+      keys: [shortcutLabel(isApple, "Mod", "Z")],
+    },
+    {
+      action: "Redo",
+      description: "Restore undone edit",
+      keys: [
+        shortcutLabel(isApple, "Mod", "Shift", "Z"),
+        ...(isApple ? [] : [shortcutLabel(isApple, "Mod", "Y")]),
+      ],
+    },
+    {
+      action: "Focus selection",
+      description: "Center selected nodes",
+      keys: ["F"],
+    },
+    {
+      action: "Select all",
+      description: "Select every node",
+      keys: [shortcutLabel(isApple, "Mod", "A")],
+    },
+    {
+      action: "Duplicate",
+      description: "Copy selected nodes",
+      keys: [shortcutLabel(isApple, "Mod", "D")],
+    },
+    {
+      action: "Delete",
+      description: "Remove selection",
+      keys: ["Delete", "Backspace"],
+    },
+    {
+      action: "Save",
+      description: "Store local graph",
+      keys: [shortcutLabel(isApple, "Mod", "S")],
+    },
+    {
+      action: "Shortcuts",
+      description: "Open this panel",
+      keys: ["?"],
+    },
+    {
+      action: "Dismiss",
+      description: "Close active popover",
+      keys: ["Esc"],
+    },
+  ];
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="shortcut-backdrop" role="presentation" onPointerDown={onClose}>
+      <section
+        className="shortcut-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="shortcut-dialog-title"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <div className="shortcut-dialog-header">
+          <div>
+            <h2 id="shortcut-dialog-title">Keyboard Shortcuts</h2>
+            <span>{isApple ? "macOS keymap" : "Windows/Linux keymap"}</span>
+          </div>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Close shortcuts"
+            onClick={onClose}
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="shortcut-list">
+          {shortcuts.map((shortcut) => (
+            <div key={shortcut.action} className="shortcut-row">
+              <div>
+                <strong>{shortcut.action}</strong>
+                <span>{shortcut.description}</span>
+              </div>
+              <div className="shortcut-keys">
+                {shortcut.keys.map((combo) => (
+                  <span key={combo} className="shortcut-combo">
+                    {combo.split(" + ").map((key) => (
+                      <kbd key={key}>{key}</kbd>
+                    ))}
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </section>
+    </div>
   );
 }
 
@@ -1813,26 +2337,78 @@ function NodeContextMenu({
   );
 }
 
-function DiagnosticsPanel({
+function PerformancePanel({ telemetry }: { readonly telemetry: PreviewTelemetry }) {
+  return (
+    <section className="panel performance-panel">
+      <div className="panel-heading">
+        <h2>Performance</h2>
+      </div>
+      <div className="metric-grid">
+        <Metric label="FPS" value={telemetry.fps > 0 ? String(telemetry.fps) : "--"} />
+        <Metric
+          label="Frame"
+          value={telemetry.frameMs > 0 ? `${telemetry.frameMs.toFixed(1)} ms` : "--"}
+        />
+        <Metric
+          label="Particles"
+          value={`${telemetry.activeParticles}/${telemetry.maxParticles}`}
+        />
+        <Metric label="Renderer" value={telemetry.webgpuLabel} />
+      </div>
+    </section>
+  );
+}
+
+function Metric({ label, value }: { readonly label: string; readonly value: string }) {
+  return (
+    <div className="metric">
+      <span>{label}</span>
+      <strong>{value}</strong>
+    </div>
+  );
+}
+
+function GraphStatusPanel({
+  compileResult,
   diagnostics,
+  edgeCount,
+  nodeCount,
 }: {
-  readonly diagnostics: readonly { severity: string; message: string; id: string }[];
+  readonly diagnostics: readonly Diagnostic[];
+  readonly compileResult: ReturnType<typeof compileGraphToIR>;
+  readonly edgeCount: number;
+  readonly nodeCount: number;
 }) {
+  const visibleDiagnostics = diagnostics.filter(
+    (diagnostic) => diagnostic.severity === "error" || diagnostic.severity === "warning",
+  );
+  const exportError = compileResult.ir
+    ? null
+    : compileResult.diagnostics.find((diagnostic) => diagnostic.severity === "error");
   return (
     <section className="panel diagnostics-panel">
       <div className="panel-heading">
-        <h2>Graph Diagnostics</h2>
+        <h2>Graph Overview</h2>
+      </div>
+      <div className="graph-facts">
+        <Metric label="Nodes" value={String(nodeCount)} />
+        <Metric label="Edges" value={String(edgeCount)} />
+        <Metric label="Export" value={compileResult.ir ? "Ready" : "Blocked"} />
       </div>
       <div className="diagnostics">
-        {diagnostics.length === 0 ? (
-          <span className="diagnostic-ok">Graph valid</span>
-        ) : (
-          diagnostics.slice(0, 6).map((diagnostic) => (
-            <span key={diagnostic.id} className={`diagnostic diagnostic-${diagnostic.severity}`}>
-              {diagnostic.message}
-            </span>
-          ))
-        )}
+        {visibleDiagnostics.slice(0, 6).map((diagnostic) => (
+          <span key={diagnostic.id} className={`diagnostic diagnostic-${diagnostic.severity}`}>
+            <CircleAlert size={14} />
+            <span>{diagnostic.message}</span>
+          </span>
+        ))}
+        {exportError &&
+        !visibleDiagnostics.some((diagnostic) => diagnostic.id === exportError.id) ? (
+          <span className="diagnostic diagnostic-error">
+            <CircleAlert size={14} />
+            <span>{exportError.message}</span>
+          </span>
+        ) : null}
       </div>
     </section>
   );
@@ -1940,11 +2516,16 @@ function ParameterFieldLabel({ metadata }: { readonly metadata: ParameterMetadat
   );
 }
 
-function PreviewViewport({ params }: { readonly params: WispySmokeVFXParams }) {
+function PreviewViewport({
+  params,
+  onTelemetry,
+}: {
+  readonly params: WispySmokeVFXParams;
+  readonly onTelemetry: (telemetry: PreviewTelemetry) => void;
+}) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const effectRef = useRef<WispySmokeVFX | null>(null);
   const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
-  const [previewStats, setPreviewStats] = useState<PreviewPerformanceStats>(EMPTY_PREVIEW_STATS);
   const webgpu = useMemo(() => getWebGPUFeatureStatus(), []);
 
   useEffect(() => {
@@ -1969,7 +2550,12 @@ function PreviewViewport({ params }: { readonly params: WispySmokeVFXParams }) {
     const effect = new WispySmokeVFX({ ...params, renderer });
     scene.add(effect.object3D);
     effectRef.current = effect;
-    setPreviewStats({ ...EMPTY_PREVIEW_STATS, ...effect.getStats() });
+    onTelemetry({
+      ...EMPTY_PREVIEW_STATS,
+      ...effect.getStats(),
+      webgpuLabel: webgpu.supported ? "WebGPU available" : "Compatible preview",
+      webgpuSupported: webgpu.supported,
+    });
 
     let frame = 0;
     let last = performance.now();
@@ -1990,17 +2576,22 @@ function PreviewViewport({ params }: { readonly params: WispySmokeVFXParams }) {
     const tick = (now: number) => {
       const rawDelta = Math.max(0, (now - last) / 1000);
       const delta = Math.min(0.05, rawDelta);
+      const sampleDelta = rawDelta > 0.5 ? 0 : rawDelta;
       last = now;
       effect.update(delta, now / 1000);
       renderer.render(scene, camera);
-      statsElapsed += rawDelta;
-      statsFrames += 1;
+      if (sampleDelta > 0) {
+        statsElapsed += sampleDelta;
+        statsFrames += 1;
+      }
       if (statsElapsed >= 0.25) {
         const averageFrameSeconds = statsElapsed / statsFrames;
-        setPreviewStats({
+        onTelemetry({
           ...effect.getStats(),
           fps: Math.round(statsFrames / Math.max(statsElapsed, 0.001)),
           frameMs: averageFrameSeconds * 1000,
+          webgpuLabel: webgpu.supported ? "WebGPU available" : "Compatible preview",
+          webgpuSupported: webgpu.supported,
         });
         statsElapsed = 0;
         statsFrames = 0;
@@ -2017,7 +2608,7 @@ function PreviewViewport({ params }: { readonly params: WispySmokeVFXParams }) {
       rendererRef.current = null;
       effectRef.current = null;
     };
-  }, []);
+  }, [onTelemetry, webgpu.supported]);
 
   useEffect(() => {
     effectRef.current?.setParams(params);
@@ -2026,16 +2617,6 @@ function PreviewViewport({ params }: { readonly params: WispySmokeVFXParams }) {
   return (
     <section className="preview-panel">
       <canvas ref={canvasRef} aria-label="Wispy Smoke preview" />
-      <div className="preview-stats" aria-label="Preview performance">
-        <strong>{previewStats.fps > 0 ? previewStats.fps : "--"} FPS</strong>
-        <span>{previewStats.frameMs > 0 ? previewStats.frameMs.toFixed(1) : "--"} ms</span>
-        <span>
-          {previewStats.activeParticles}/{previewStats.maxParticles} particles
-        </span>
-      </div>
-      <span className={`preview-badge ${webgpu.supported ? "preview-badge-ok" : ""}`}>
-        {webgpu.supported ? "WebGPU available" : "Compatible preview"}
-      </span>
     </section>
   );
 }

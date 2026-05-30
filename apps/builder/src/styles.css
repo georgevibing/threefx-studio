@@ -36,6 +36,9 @@
   --selection-blue: #60a5fa;
   --edge-selected: var(--selection-blue);
   --selection-blue-shadow: rgba(96, 165, 250, 0.62);
+  --warning: #f59e0b;
+  --warning-bg: rgba(245, 158, 11, 0.1);
+  --destructive-bg: rgba(239, 68, 68, 0.1);
   --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.18);
   background: var(--background);
   color: var(--foreground);
@@ -159,6 +162,16 @@ button {
 .icon-button:hover {
   border-color: var(--ring);
   background: var(--secondary);
+}
+
+.icon-button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.icon-button:disabled:hover {
+  border-color: var(--border);
+  background: var(--card);
 }
 
 .workspace {
@@ -310,6 +323,12 @@ button {
   opacity: 0.42;
 }
 
+.threefx-flow .react-flow__selection {
+  border: 1px dashed var(--selection-blue);
+  background: rgba(96, 165, 250, 0.14);
+  box-shadow: 0 0 18px rgba(96, 165, 250, 0.16);
+}
+
 .react-flow__controls {
   overflow: hidden;
   border: 1px solid var(--border);
@@ -414,20 +433,9 @@ button {
   display: flex;
   max-width: 96px;
   align-items: center;
-  gap: 5px;
   color: var(--muted-foreground);
   font-size: 11px;
   line-height: 18px;
-}
-
-.port-label::before {
-  width: 6px;
-  height: 6px;
-  flex: 0 0 auto;
-  border: 1px solid var(--port-border-color);
-  border-radius: 999px;
-  background: var(--port-color);
-  content: "";
 }
 
 .port-label span {
@@ -624,6 +632,23 @@ button {
   stroke: var(--foreground);
 }
 
+.pending-quick-add-edge {
+  position: absolute;
+  z-index: 19;
+  inset: 0;
+  overflow: visible;
+  pointer-events: none;
+}
+
+.pending-quick-add-edge path {
+  fill: none;
+  stroke: var(--edge-selected);
+  stroke-width: 2.5;
+  stroke-dasharray: 8 6;
+  filter: drop-shadow(0 0 6px var(--selection-blue-shadow));
+  animation: threefx-edge-dash 700ms linear infinite;
+}
+
 .quick-add,
 .node-menu {
   position: fixed;
@@ -659,7 +684,7 @@ button {
 .right-rail {
   display: grid;
   min-height: 0;
-  grid-template-rows: 250px minmax(0, 1fr) auto;
+  grid-template-rows: 250px auto minmax(0, 1fr) auto;
   gap: 10px;
   padding: 10px;
 }
@@ -678,47 +703,6 @@ button {
   height: 100%;
 }
 
-.preview-badge {
-  position: absolute;
-  right: 8px;
-  bottom: 8px;
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  background: var(--background);
-  color: var(--muted-foreground);
-  padding: 4px 8px;
-  font-size: 11px;
-}
-
-.preview-stats {
-  position: absolute;
-  top: 8px;
-  left: 8px;
-  display: grid;
-  gap: 2px;
-  min-width: 118px;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--background);
-  color: var(--muted-foreground);
-  padding: 6px 8px;
-  font-family: var(--font-mono);
-  font-size: 11px;
-  font-variant-numeric: tabular-nums;
-  line-height: 1.25;
-  pointer-events: none;
-}
-
-.preview-stats strong {
-  color: var(--foreground);
-  font-size: 12px;
-}
-
-.preview-badge-ok {
-  border-color: var(--ring);
-  color: var(--foreground);
-}
-
 .panel {
   min-height: 0;
   overflow: auto;
@@ -732,6 +716,41 @@ button {
 .export-actions small {
   color: var(--muted-foreground);
   font-size: 12px;
+}
+
+.metric-grid,
+.graph-facts {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+}
+
+.metric {
+  min-width: 0;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  padding: 7px;
+}
+
+.metric span {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  line-height: 1.2;
+  text-transform: uppercase;
+}
+
+.metric strong {
+  display: block;
+  overflow: hidden;
+  margin-top: 4px;
+  color: var(--foreground);
+  font-family: var(--font-mono);
+  font-size: 12px;
+  font-weight: 600;
+  text-overflow: ellipsis;
+  white-space: nowrap;
 }
 
 .param-field {
@@ -786,25 +805,137 @@ button {
 }
 
 .diagnostic,
-.diagnostic-ok,
 .export-blocked {
   border: 1px solid var(--border);
   border-radius: 7px;
   padding: 7px;
 }
 
-.diagnostic-ok {
-  color: var(--foreground);
+.diagnostic {
+  display: flex;
+  align-items: flex-start;
+  gap: 7px;
+  line-height: 1.35;
 }
 
 .diagnostic-error,
 .export-blocked {
   border-color: var(--destructive);
+  background: var(--destructive-bg);
   color: var(--foreground);
 }
 
 .diagnostic-warning {
+  border-color: var(--warning);
+  background: var(--warning-bg);
   color: var(--foreground);
+}
+
+.diagnostic-error svg {
+  color: var(--destructive);
+}
+
+.diagnostic-warning svg {
+  color: var(--warning);
+}
+
+.shortcut-backdrop {
+  position: fixed;
+  z-index: 60;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  background: rgba(0, 0, 0, 0.64);
+  padding: 18px;
+}
+
+.shortcut-dialog {
+  width: min(560px, calc(100vw - 36px));
+  max-height: min(720px, calc(100vh - 36px));
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--popover);
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.54);
+}
+
+.shortcut-dialog-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  border-bottom: 1px solid var(--border);
+  padding: 12px;
+}
+
+.shortcut-dialog-header h2 {
+  margin: 0;
+  font-size: 15px;
+  line-height: 1.2;
+}
+
+.shortcut-dialog-header span {
+  display: block;
+  margin-top: 3px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.shortcut-list {
+  display: grid;
+  padding: 8px;
+}
+
+.shortcut-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 14px;
+  border-bottom: 1px solid var(--border);
+  padding: 9px 4px;
+}
+
+.shortcut-row:last-child {
+  border-bottom: 0;
+}
+
+.shortcut-row strong {
+  display: block;
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.shortcut-row span {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.shortcut-keys {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 5px;
+}
+
+.shortcut-combo {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.shortcut-combo kbd {
+  min-width: 26px;
+  border: 1px solid var(--border);
+  border-bottom-color: var(--ring);
+  border-radius: 6px;
+  background: var(--background);
+  color: var(--foreground);
+  padding: 4px 7px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  line-height: 1;
+  text-align: center;
+  box-shadow: inset 0 -1px 0 rgba(255, 255, 255, 0.08);
 }
 
 .export-panel {
@@ -867,7 +998,15 @@ button {
     overflow-x: auto;
   }
 
+  .topbar-actions {
+    order: 3;
+    width: 100%;
+    overflow-x: auto;
+    padding-bottom: 2px;
+  }
+
   .app-shell {
+    grid-template-rows: auto 1fr;
     height: auto;
     min-height: 100vh;
   }

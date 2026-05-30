@@ -1,7 +1,11 @@
 import * as THREE from "three";
 import { DisposableGroup, resolveQualityProfile, type VFXEffect } from "@threefx/runtime";
 import { normalizeWispySmokeParams } from "./wispySmokeDefaults";
-import type { WispySmokeVFXOptions, WispySmokeVFXParams } from "./wispySmokeTypes";
+import type {
+  WispySmokeVFXOptions,
+  WispySmokeVFXParams,
+  WispySmokeVFXStats,
+} from "./wispySmokeTypes";
 
 interface SmokeParticle {
   age: number;
@@ -102,7 +106,14 @@ function createGlowTexture(size: number): THREE.CanvasTexture {
   if (!context) {
     throw new Error("Unable to create 2D canvas for smoke glow texture.");
   }
-  const gradient = context.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+  const gradient = context.createRadialGradient(
+    size / 2,
+    size / 2,
+    0,
+    size / 2,
+    size / 2,
+    size / 2,
+  );
   gradient.addColorStop(0, "rgba(255, 178, 86, 0.72)");
   gradient.addColorStop(0.42, "rgba(255, 121, 45, 0.2)");
   gradient.addColorStop(1, "rgba(255, 121, 45, 0)");
@@ -199,6 +210,13 @@ export class WispySmokeVFX implements VFXEffect<WispySmokeVFXParams> {
     return this.params;
   }
 
+  getStats(): WispySmokeVFXStats {
+    return {
+      activeParticles: this.particles.length,
+      maxParticles: this.maxParticles,
+    };
+  }
+
   dispose(): void {
     this.object3D.remove(this.points);
     if (this.glowSprite) {
@@ -218,7 +236,10 @@ export class WispySmokeVFX implements VFXEffect<WispySmokeVFXParams> {
     const profile = resolveQualityProfile(this.params.quality);
     this.maxParticles = Math.max(
       16,
-      Math.min(profile.maxParticles, Math.ceil(this.params.spawnRate * this.params.lifetime * 1.55)),
+      Math.min(
+        profile.maxParticles,
+        Math.ceil(this.params.spawnRate * this.params.lifetime * 1.55),
+      ),
     );
     this.positions = new Float32Array(this.maxParticles * 3);
     this.alphas = new Float32Array(this.maxParticles);
@@ -282,7 +303,8 @@ export class WispySmokeVFX implements VFXEffect<WispySmokeVFXParams> {
       particle.velocityX += Math.sin(swirlPhase) * curl * deltaSeconds;
       particle.velocityZ += Math.cos(swirlPhase * 0.83) * curl * deltaSeconds;
       particle.x += (particle.velocityX + windX * wander) * deltaSeconds;
-      particle.y += (particle.velocityY + windY + this.params.riseSpeed * 0.18 * (1 - ageRatio)) * deltaSeconds;
+      particle.y +=
+        (particle.velocityY + windY + this.params.riseSpeed * 0.18 * (1 - ageRatio)) * deltaSeconds;
       particle.z += (particle.velocityZ + windZ * wander) * deltaSeconds;
       particle.angle += (0.16 + this.params.curlStrength * 0.2) * deltaSeconds;
       live.push(particle);
@@ -300,7 +322,8 @@ export class WispySmokeVFX implements VFXEffect<WispySmokeVFXParams> {
       const ageRatio = clamp(particle.age / Math.max(0.001, particle.lifetime), 0, 1);
       const grow = 0.42 + ageRatio * 1.65;
       const plumeFade = 1 - smoothstep(0.82, 1, particle.y / Math.max(0.01, this.params.height));
-      const lifeFade = Math.sin(Math.PI * ageRatio) * Math.pow(1 - ageRatio, this.params.dissipation);
+      const lifeFade =
+        Math.sin(Math.PI * ageRatio) * Math.pow(1 - ageRatio, this.params.dissipation);
       this.positions[count * 3] = particle.x;
       this.positions[count * 3 + 1] = particle.y;
       this.positions[count * 3 + 2] = particle.z;
@@ -325,7 +348,9 @@ export class WispySmokeVFX implements VFXEffect<WispySmokeVFXParams> {
       return;
     }
     if (!this.glowMaterial || !this.glowSprite) {
-      const texture = this.disposables.add(createGlowTexture(resolveQualityProfile(this.params.quality).textureSize));
+      const texture = this.disposables.add(
+        createGlowTexture(resolveQualityProfile(this.params.quality).textureSize),
+      );
       const glowMaterial = this.disposables.add(
         new THREE.SpriteMaterial({
           map: texture,
@@ -353,7 +378,9 @@ export class WispySmokeVFX implements VFXEffect<WispySmokeVFXParams> {
     const scale = Math.max(0.4, this.params.radius * 3.2);
     this.glowSprite.position.set(0, 0.05, 0);
     this.glowSprite.scale.set(scale, scale, 1);
-    this.glowMaterial.opacity = this.params.warmGlow ? clamp(this.params.opacity * 0.24, 0, 0.35) : 0;
+    this.glowMaterial.opacity = this.params.warmGlow
+      ? clamp(this.params.opacity * 0.24, 0, 0.35)
+      : 0;
   }
 }
 

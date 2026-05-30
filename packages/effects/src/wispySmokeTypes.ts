@@ -21,6 +21,11 @@ export interface WispySmokeVFXParams {
   readonly warmGlow: boolean;
 }
 
+export interface WispySmokeVFXStats {
+  readonly activeParticles: number;
+  readonly maxParticles: number;
+}
+
 export type WispySmokeVFXOptions = Partial<WispySmokeVFXParams> & {
   readonly renderer?: unknown;
   readonly position?: Vec3;

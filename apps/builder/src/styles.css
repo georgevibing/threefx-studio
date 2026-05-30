@@ -1,0 +1,650 @@
+:root {
+  color-scheme: dark;
+  --background: oklch(0 0 0);
+  --foreground: oklch(1 0 0);
+  --card: oklch(0.14 0 0);
+  --card-foreground: oklch(1 0 0);
+  --popover: oklch(0.18 0 0);
+  --popover-foreground: oklch(1 0 0);
+  --primary: oklch(1 0 0);
+  --primary-foreground: oklch(0 0 0);
+  --secondary: oklch(0.25 0 0);
+  --secondary-foreground: oklch(1 0 0);
+  --muted: oklch(0.23 0 0);
+  --muted-foreground: oklch(0.72 0 0);
+  --accent: oklch(0.32 0 0);
+  --accent-foreground: oklch(1 0 0);
+  --destructive: oklch(0.69 0.2 23.91);
+  --destructive-foreground: oklch(0 0 0);
+  --border: oklch(0.26 0 0);
+  --input: oklch(0.32 0 0);
+  --ring: oklch(0.72 0 0);
+  --sidebar: oklch(0.18 0 0);
+  --sidebar-foreground: oklch(1 0 0);
+  --sidebar-accent: oklch(0.32 0 0);
+  --sidebar-border: oklch(0.32 0 0);
+  --font-sans: Geist, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
+  --radius: 8px;
+  --panel: #080808;
+  --panel-raised: #0f0f0f;
+  --panel-subtle: #111111;
+  --canvas: #020202;
+  --edge: #737373;
+  --edge-selected: #ffffff;
+  --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.18);
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-sans);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  min-width: 320px;
+  min-height: 100vh;
+  overflow: hidden;
+  background: var(--background);
+  color: var(--foreground);
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+button {
+  color: inherit;
+}
+
+.hidden-input {
+  display: none;
+}
+
+.app-shell {
+  display: grid;
+  grid-template-rows: 56px 1fr;
+  height: 100vh;
+  width: 100vw;
+  background: var(--background);
+  outline: none;
+}
+
+.topbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  border-bottom: 1px solid var(--border);
+  background: var(--background);
+  padding: 8px 12px;
+}
+
+.brand {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 10px;
+}
+
+.brand-mark {
+  display: grid;
+  width: 34px;
+  height: 34px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--foreground);
+  color: var(--background);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.brand h1 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 15px;
+  letter-spacing: 0;
+}
+
+.brand span:last-child {
+  display: block;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.topbar-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.topbar-center {
+  display: flex;
+  min-width: 0;
+  flex: 1 1 auto;
+  justify-content: center;
+  gap: 6px;
+}
+
+.status-pill {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  padding: 5px 9px;
+  font-size: 12px;
+  white-space: nowrap;
+}
+
+.icon-button {
+  display: grid;
+  width: 32px;
+  height: 32px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  box-shadow: var(--shadow-sm);
+  cursor: pointer;
+}
+
+.icon-button:hover {
+  border-color: var(--ring);
+  background: var(--secondary);
+}
+
+.workspace {
+  display: grid;
+  min-height: 0;
+  grid-template-columns: 270px minmax(460px, 1fr) 380px;
+}
+
+.node-palette,
+.right-rail {
+  min-height: 0;
+  background: var(--background);
+}
+
+.node-palette {
+  display: flex;
+  flex-direction: column;
+  border-right: 1px solid var(--border);
+  padding: 12px;
+}
+
+.panel-heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  margin-bottom: 10px;
+}
+
+.panel-heading h2 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 13px;
+  letter-spacing: 0;
+}
+
+.node-palette input,
+.quick-add input,
+.param-field input,
+.param-field select {
+  width: 100%;
+  border: 1px solid var(--input);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--foreground);
+  padding: 8px 9px;
+  outline: none;
+}
+
+.node-palette input:focus,
+.quick-add input:focus,
+.param-field input:focus,
+.param-field select:focus {
+  border-color: var(--ring);
+}
+
+.palette-list {
+  min-height: 0;
+  margin-top: 10px;
+  overflow: auto;
+}
+
+.palette-item,
+.quick-add-list button,
+.node-menu button,
+.export-actions button {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  padding: 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.palette-item {
+  margin-bottom: 6px;
+}
+
+.palette-item:hover,
+.quick-add-list button:hover,
+.node-menu button:hover,
+.export-actions button:hover {
+  border-color: var(--ring);
+  background: var(--secondary);
+}
+
+.palette-item span,
+.quick-add-list span {
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 13px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.palette-item small,
+.quick-add-list small {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.canvas-panel {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+  border-right: 1px solid var(--border);
+}
+
+.react-flow {
+  background: var(--canvas);
+}
+
+.react-flow__background {
+  opacity: 0.42;
+}
+
+.react-flow__controls,
+.react-flow__minimap {
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  box-shadow: none;
+}
+
+.react-flow__controls-button {
+  border-bottom: 1px solid var(--border) !important;
+  background: var(--background) !important;
+  color: var(--foreground) !important;
+}
+
+.react-flow__controls-button:hover {
+  background: var(--secondary) !important;
+}
+
+.react-flow__minimap svg {
+  background: var(--background);
+}
+
+.graph-node {
+  width: 220px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-raised);
+  box-shadow: none;
+}
+
+.graph-node-selected {
+  border-color: var(--foreground);
+  outline: 1px solid var(--foreground);
+}
+
+.graph-node-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+}
+
+.graph-node-header span {
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 13px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.graph-node-header small {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.port-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  min-height: 48px;
+  padding: 8px 10px;
+}
+
+.port-column {
+  display: flex;
+  min-width: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.port-column-right {
+  align-items: flex-end;
+}
+
+.port-label {
+  position: relative;
+  max-width: 96px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+  line-height: 18px;
+}
+
+.port-label span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.port-label-out {
+  text-align: right;
+}
+
+.port-handle {
+  width: 10px !important;
+  height: 10px !important;
+  border: 2px solid var(--background) !important;
+  background: var(--muted-foreground) !important;
+}
+
+.port-handle-connected {
+  background: var(--foreground) !important;
+  box-shadow: 0 0 0 2px var(--background);
+}
+
+.node-value {
+  overflow: hidden;
+  border-top: 1px solid var(--border);
+  padding: 6px 10px 8px;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.threefx-edge path {
+  stroke: var(--edge);
+  stroke-width: 2;
+}
+
+.threefx-edge-selected path {
+  stroke: var(--edge-selected);
+  stroke-width: 3;
+}
+
+.react-flow__connection-path {
+  stroke: var(--foreground);
+}
+
+.quick-add,
+.node-menu {
+  position: fixed;
+  z-index: 20;
+  width: 280px;
+  max-width: calc(100vw - 24px);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--popover);
+  box-shadow: 0 18px 48px hsl(0 0% 0% / 0.44);
+  padding: 8px;
+}
+
+.quick-add-list {
+  max-height: 300px;
+  margin-top: 8px;
+  overflow: auto;
+}
+
+.quick-add-list button,
+.node-menu button {
+  margin-bottom: 6px;
+}
+
+.node-menu {
+  width: 170px;
+}
+
+.node-menu button {
+  justify-content: flex-start;
+}
+
+.right-rail {
+  display: grid;
+  min-height: 0;
+  grid-template-rows: 250px minmax(0, 1fr) auto;
+  gap: 10px;
+  padding: 10px;
+}
+
+.preview-panel {
+  position: relative;
+  overflow: hidden;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--background);
+}
+
+.preview-panel canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+.preview-badge {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--background);
+  color: var(--muted-foreground);
+  padding: 4px 8px;
+  font-size: 11px;
+}
+
+.preview-badge-ok {
+  border-color: var(--ring);
+  color: var(--foreground);
+}
+
+.panel {
+  min-height: 0;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  padding: 10px;
+}
+
+.selected-node {
+  border-bottom: 1px solid var(--border);
+  margin-bottom: 10px;
+  padding-bottom: 10px;
+}
+
+.selected-node strong,
+.selected-node span,
+.selected-node p {
+  display: block;
+}
+
+.selected-node strong {
+  color: var(--foreground);
+  font-size: 13px;
+}
+
+.selected-node span,
+.selected-node p,
+.diagnostics,
+.export-actions small {
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.port-summary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+  margin-top: 8px;
+}
+
+.port-summary span {
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 3px 7px;
+}
+
+.param-list {
+  display: grid;
+  gap: 8px;
+}
+
+.param-field {
+  display: grid;
+  gap: 5px;
+  color: var(--muted-foreground);
+  font-size: 12px;
+}
+
+.param-field span {
+  color: var(--foreground);
+}
+
+.param-field-row {
+  grid-template-columns: 1fr auto;
+  align-items: center;
+}
+
+.param-field-row input {
+  width: auto;
+}
+
+.vec-field {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 5px;
+}
+
+.diagnostics {
+  display: grid;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.diagnostic,
+.diagnostic-ok,
+.export-blocked {
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  padding: 7px;
+}
+
+.diagnostic-ok {
+  color: var(--foreground);
+}
+
+.diagnostic-error,
+.export-blocked {
+  border-color: var(--destructive);
+  color: var(--foreground);
+}
+
+.diagnostic-warning {
+  color: var(--foreground);
+}
+
+.export-panel {
+  overflow: visible;
+}
+
+.export-actions {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 6px;
+}
+
+.export-actions button {
+  justify-content: center;
+}
+
+.export-actions small {
+  grid-column: 1 / -1;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+@media (max-width: 1100px) {
+  .workspace {
+    grid-template-columns: 230px minmax(360px, 1fr) 330px;
+  }
+}
+
+@media (max-width: 860px) {
+  body {
+    overflow: auto;
+  }
+
+  .topbar {
+    align-items: flex-start;
+    flex-wrap: wrap;
+  }
+
+  .topbar-center {
+    order: 3;
+    width: 100%;
+    justify-content: flex-start;
+    overflow-x: auto;
+  }
+
+  .app-shell {
+    height: auto;
+    min-height: 100vh;
+  }
+
+  .workspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: 240px 620px auto;
+  }
+
+  .node-palette,
+  .right-rail {
+    border: 0;
+  }
+}

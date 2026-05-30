@@ -1735,7 +1735,7 @@ function TopBar({
   return (
     <header className="topbar">
       <div className="brand">
-        <span className="brand-mark">FX</span>
+        <img className="brand-logo" src="/logo.png" alt="" aria-hidden="true" />
         <div>
           <h1>ThreeFX Studio</h1>
           <span>{status}</span>

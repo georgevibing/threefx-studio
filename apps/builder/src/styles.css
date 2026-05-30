@@ -98,17 +98,12 @@ button {
   gap: 10px;
 }
 
-.brand-mark {
-  display: grid;
+.brand-logo {
+  display: block;
   width: 34px;
-  height: 34px;
-  place-items: center;
-  border: 1px solid var(--border);
-  border-radius: 7px;
-  background: var(--foreground);
-  color: var(--background);
-  font-size: 12px;
-  font-weight: 800;
+  height: 40px;
+  flex: 0 0 auto;
+  object-fit: contain;
 }
 
 .brand h1 {

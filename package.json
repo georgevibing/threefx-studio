@@ -1,0 +1,35 @@
+{
+  "name": "threefx-studio",
+  "version": "0.1.0",
+  "description": "Browser-based procedural VFX builder for Three.js WebGPU-oriented projects.",
+  "private": true,
+  "type": "module",
+  "license": "MIT",
+  "packageManager": "pnpm@10.18.0",
+  "scripts": {
+    "dev": "pnpm --filter @threefx/builder dev",
+    "build": "pnpm -r --if-present build",
+    "test": "vitest run",
+    "lint": "eslint .",
+    "typecheck": "pnpm -r --if-present typecheck",
+    "format": "prettier --write .",
+    "format:check": "prettier --check ."
+  },
+  "keywords": [
+    "threejs",
+    "webgpu",
+    "vfx",
+    "procedural",
+    "react-flow"
+  ],
+  "devDependencies": {
+    "@eslint/js": "^9.18.0",
+    "@types/node": "^22.10.5",
+    "@types/three": "^0.184.1",
+    "eslint": "^9.18.0",
+    "prettier": "^3.4.2",
+    "typescript": "^5.7.2",
+    "typescript-eslint": "^8.20.0",
+    "vitest": "^3.0.0"
+  }
+}

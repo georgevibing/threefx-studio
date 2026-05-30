@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.base.json",
+  "files": [],
+  "references": [
+    { "path": "./packages/core" },
+    { "path": "./packages/runtime" },
+    { "path": "./packages/effects" },
+    { "path": "./packages/exporter" },
+    { "path": "./packages/ui" },
+    { "path": "./apps/builder" }
+  ]
+}

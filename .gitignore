@@ -1,0 +1,8 @@
+node_modules/
+dist/
+coverage/
+.vite/
+.turbo/
+*.log
+.codex-*
+roadmap.md

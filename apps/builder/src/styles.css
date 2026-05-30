@@ -23,7 +23,9 @@
   --sidebar-foreground: oklch(1 0 0);
   --sidebar-accent: oklch(0.32 0 0);
   --sidebar-border: oklch(0.32 0 0);
-  --font-sans: Geist, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  --font-sans:
+    Geist, Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI",
+    sans-serif;
   --font-mono: "Geist Mono", ui-monospace, SFMono-Regular, Consolas, monospace;
   --radius: 8px;
   --panel: #080808;
@@ -31,7 +33,9 @@
   --panel-subtle: #111111;
   --canvas: #020202;
   --edge: #737373;
-  --edge-selected: #ffffff;
+  --selection-blue: #60a5fa;
+  --edge-selected: var(--selection-blue);
+  --selection-blue-shadow: rgba(96, 165, 250, 0.62);
   --shadow-sm: 0 1px 2px hsl(0 0% 0% / 0.18);
   background: var(--background);
   color: var(--foreground);
@@ -269,16 +273,44 @@ button {
   border-right: 1px solid var(--border);
 }
 
-.react-flow {
+.threefx-flow {
   background: var(--canvas);
+}
+
+.threefx-flow,
+.threefx-flow .react-flow__pane,
+.threefx-flow .react-flow__renderer,
+.threefx-flow .react-flow__selectionpane,
+.threefx-flow .react-flow__node {
+  cursor: default;
+}
+
+.threefx-flow .react-flow__handle,
+.threefx-flow .react-flow__edge,
+.threefx-flow .react-flow__edge-interaction,
+.threefx-flow .react-flow__controls-button {
+  cursor: pointer;
+}
+
+.threefx-flow .react-flow__node.dragging,
+.threefx-flow .react-flow__node.dragging .graph-node {
+  cursor: grabbing;
+}
+
+.canvas-panel-panning .threefx-flow,
+.canvas-panel-panning .threefx-flow .react-flow__pane,
+.canvas-panel-panning .threefx-flow .react-flow__renderer,
+.canvas-panel-panning .threefx-flow .react-flow__selectionpane,
+.canvas-panel-panning .threefx-flow .react-flow__node,
+.canvas-panel-panning .threefx-flow .react-flow__handle {
+  cursor: grabbing !important;
 }
 
 .react-flow__background {
   opacity: 0.42;
 }
 
-.react-flow__controls,
-.react-flow__minimap {
+.react-flow__controls {
   overflow: hidden;
   border: 1px solid var(--border);
   border-radius: 7px;
@@ -296,21 +328,39 @@ button {
   background: var(--secondary) !important;
 }
 
-.react-flow__minimap svg {
-  background: var(--background);
-}
-
 .graph-node {
-  width: 220px;
+  position: relative;
+  overflow: visible;
+  width: 260px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--panel-raised);
   box-shadow: none;
+  cursor: default;
 }
 
 .graph-node-selected {
-  border-color: var(--foreground);
-  outline: 1px solid var(--foreground);
+  border-color: transparent;
+}
+
+.graph-node-selected::after {
+  position: absolute;
+  z-index: 4;
+  inset: -2px;
+  pointer-events: none;
+  content: "";
+  border-radius: 8px;
+  background:
+    repeating-linear-gradient(90deg, var(--selection-blue) 0 8px, transparent 8px 14px) 0 0 / 200%
+      2px repeat-x,
+    repeating-linear-gradient(90deg, var(--selection-blue) 0 8px, transparent 8px 14px) 0 100% /
+      200% 2px repeat-x,
+    repeating-linear-gradient(0deg, var(--selection-blue) 0 8px, transparent 8px 14px) 0 0 / 2px
+      200% repeat-y,
+    repeating-linear-gradient(0deg, var(--selection-blue) 0 8px, transparent 8px 14px) 100% 0 / 2px
+      200% repeat-y;
+  box-shadow: 0 0 18px var(--selection-blue-shadow);
+  animation: threefx-selection-dash 700ms linear infinite;
 }
 
 .graph-node-header {
@@ -357,34 +407,82 @@ button {
 }
 
 .port-label {
+  --port-color: var(--muted-foreground);
+  --port-fill: var(--card);
+  --port-border-color: var(--border);
   position: relative;
+  display: flex;
   max-width: 96px;
+  align-items: center;
+  gap: 5px;
   color: var(--muted-foreground);
   font-size: 11px;
   line-height: 18px;
 }
 
+.port-label::before {
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border: 1px solid var(--port-border-color);
+  border-radius: 999px;
+  background: var(--port-color);
+  content: "";
+}
+
 .port-label span {
   display: block;
+  min-width: 0;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
 }
 
 .port-label-out {
+  flex-direction: row-reverse;
   text-align: right;
 }
 
 .port-handle {
+  --port-color: var(--muted-foreground);
+  --port-fill: var(--card);
+  --port-border-color: var(--border);
   width: 10px !important;
   height: 10px !important;
-  border: 2px solid var(--background) !important;
-  background: var(--muted-foreground) !important;
+  border: 2px solid var(--port-border-color) !important;
+  background: var(--background) !important;
+  box-shadow: 0 0 0 2px var(--background);
+  z-index: 6 !important;
+  transform-origin: center;
+  transition:
+    background-color 120ms ease,
+    border-color 120ms ease,
+    box-shadow 120ms ease,
+    transform 120ms ease;
+}
+
+.graph-node .port-handle.react-flow__handle-left {
+  left: 0 !important;
+  transform: translate(-50%, -50%);
+}
+
+.graph-node .port-handle.react-flow__handle-right {
+  right: 0 !important;
+  transform: translate(50%, -50%);
+}
+
+.graph-node .port-handle.react-flow__handle-left:hover,
+.graph-node .port-handle.react-flow__handle-left:focus-visible {
+  transform: translate(-50%, -50%) scale(1.12);
+}
+
+.graph-node .port-handle.react-flow__handle-right:hover,
+.graph-node .port-handle.react-flow__handle-right:focus-visible {
+  transform: translate(50%, -50%) scale(1.12);
 }
 
 .port-handle-connected {
-  background: var(--foreground) !important;
-  box-shadow: 0 0 0 2px var(--background);
+  background: var(--port-color) !important;
 }
 
 .node-value {
@@ -398,14 +496,128 @@ button {
   white-space: nowrap;
 }
 
-.threefx-edge path {
-  stroke: var(--edge);
-  stroke-width: 2;
+.node-parameter-panel {
+  border-top: 1px solid var(--border);
+  background: var(--background);
 }
 
-.threefx-edge-selected path {
-  stroke: var(--edge-selected);
+.node-parameter-panel-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 7px 8px;
+}
+
+.node-parameter-panel-header > span {
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 700;
+  letter-spacing: 0;
+  text-transform: uppercase;
+}
+
+.node-parameter-panel-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.node-parameter-count,
+.node-parameter-panel-actions button {
+  display: grid;
+  height: 22px;
+  min-width: 22px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+.node-parameter-panel-actions button {
+  padding: 0;
+  cursor: pointer;
+}
+
+.node-parameter-panel-actions button:hover:not(:disabled) {
+  border-color: var(--ring);
+  color: var(--foreground);
+}
+
+.node-parameter-panel-actions button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.node-parameter-groups {
+  border-top: 1px solid var(--border);
+}
+
+.node-parameter-group + .node-parameter-group {
+  border-top: 1px solid var(--border);
+}
+
+.node-parameter-group-trigger {
+  display: flex;
+  width: 100%;
+  align-items: center;
+  gap: 6px;
+  border: 0;
+  background: transparent;
+  color: var(--muted-foreground);
+  padding: 7px 8px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.node-parameter-group-trigger:hover {
+  background: var(--card);
+  color: var(--foreground);
+}
+
+.node-parameter-group-trigger span {
+  min-width: 0;
+  flex: 1 1 auto;
+  overflow: hidden;
+  color: inherit;
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.node-parameter-group-trigger small {
+  color: var(--muted-foreground);
+  font-size: 10px;
+}
+
+.node-parameter-group-body {
+  display: grid;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  padding: 8px;
+}
+
+.threefx-edge .react-flow__edge-path {
+  stroke: var(--edge);
+  stroke-width: 2;
+  transition:
+    stroke 120ms ease,
+    stroke-width 120ms ease,
+    filter 120ms ease,
+    opacity 120ms ease;
+}
+
+.threefx-edge-selected .react-flow__edge-path,
+.threefx-edge.selected .react-flow__edge-path,
+.react-flow__edge.selected .react-flow__edge-path {
+  stroke: var(--edge-selected) !important;
   stroke-width: 3;
+  stroke-dasharray: 8 6;
+  filter: drop-shadow(0 0 6px var(--selection-blue-shadow));
+  animation: threefx-edge-dash 700ms linear infinite;
 }
 
 .react-flow__connection-path {
@@ -478,6 +690,30 @@ button {
   font-size: 11px;
 }
 
+.preview-stats {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  display: grid;
+  gap: 2px;
+  min-width: 118px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--muted-foreground);
+  padding: 6px 8px;
+  font-family: var(--font-mono);
+  font-size: 11px;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.25;
+  pointer-events: none;
+}
+
+.preview-stats strong {
+  color: var(--foreground);
+  font-size: 12px;
+}
+
 .preview-badge-ok {
   border-color: var(--ring);
   color: var(--foreground);
@@ -492,47 +728,10 @@ button {
   padding: 10px;
 }
 
-.selected-node {
-  border-bottom: 1px solid var(--border);
-  margin-bottom: 10px;
-  padding-bottom: 10px;
-}
-
-.selected-node strong,
-.selected-node span,
-.selected-node p {
-  display: block;
-}
-
-.selected-node strong {
-  color: var(--foreground);
-  font-size: 13px;
-}
-
-.selected-node span,
-.selected-node p,
 .diagnostics,
 .export-actions small {
   color: var(--muted-foreground);
   font-size: 12px;
-}
-
-.port-summary {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 5px;
-  margin-top: 8px;
-}
-
-.port-summary span {
-  border: 1px solid var(--border);
-  border-radius: 999px;
-  padding: 3px 7px;
-}
-
-.param-list {
-  display: grid;
-  gap: 8px;
 }
 
 .param-field {
@@ -542,8 +741,27 @@ button {
   font-size: 12px;
 }
 
-.param-field span {
+.param-field-label {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.param-field-label span {
   color: var(--foreground);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.param-field-label small {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 10px;
+  text-transform: uppercase;
 }
 
 .param-field-row {
@@ -608,6 +826,22 @@ button {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+@keyframes threefx-selection-dash {
+  to {
+    background-position:
+      14px 0,
+      -14px 100%,
+      0 -14px,
+      100% 14px;
+  }
+}
+
+@keyframes threefx-edge-dash {
+  to {
+    stroke-dashoffset: -14;
+  }
 }
 
 @media (max-width: 1100px) {

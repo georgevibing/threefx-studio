@@ -37,7 +37,7 @@ The registry maps node type ids to `NodeDefinition`. Definitions include label, 
 
 ## Port/Type System
 
-Ports are directional and typed. The compatibility layer allows exact assignment and narrow coercions such as `int` to `float`. Target ports may list accepted types. UI connection checks and core validation use the same rules.
+Ports are directional and typed. The compatibility layer allows exact assignment and narrow coercions such as `int` to `float` and scalar values into `curve`. Target ports may list `acceptedTypes`, and single-input ports reject additional edges unless marked `multiple`. UI connection checks, drag-to-empty quick-add filtering, core validation, and export compilation use the same rules. The full compatibility reference lives in `PORT_TYPES.md`.
 
 ## Validation Pipeline
 

@@ -2,7 +2,7 @@
 
 ThreeFX Studio is a browser-based procedural VFX builder for Three.js projects targeting the WebGPU era. The goal is a clean web-first authoring workflow: edit a live effect graph, preview it in the browser, then export small typed TypeScript source files that can be dropped into another Three.js project.
 
-The current MVP is a vertical slice around one effect, `WispySmokeVFX`. It includes a typed node graph, parameter inspector, live preview, graph JSON save/load, and TypeScript export.
+The current MVP is a vertical slice around one effect, `WispySmokeVFX`. It includes a typed node graph, node-local parameter editing, live preview, graph JSON save/load, and TypeScript export.
 
 ## Why WebGPU
 
@@ -24,9 +24,13 @@ Open the Vite URL printed by pnpm. The builder app lives in `apps/builder`.
 
 ## Edit Wispy Smoke
 
-The default graph is the Wispy Smoke preset. Use the node palette or right-click the canvas to add nodes. Drag between compatible ports to connect nodes. Drag from a port into empty canvas space to open a filtered node menu. Select a node or edge, then use the inspector and parameter controls on the right.
+The default graph is the Wispy Smoke preset. Use the node palette or right-click the canvas to add nodes. Drag between compatible ports to connect nodes. Drag from a port into empty canvas space to open a filtered node menu. Use the Auto layout toolbar button to rearrange nodes into ranked, non-overlapping lanes. Node configuration lives in grouped parameter panels on each node; the right rail is reserved for preview, graph diagnostics, and export.
 
 Parameter changes update the preview immediately. Save/load uses browser local storage, and graph JSON can also be imported or downloaded.
+
+## Port Types
+
+Ports are directional and typed. Exact matches are accepted, `int` can feed `float`, `float` and `int` can feed `curve`, inputs can declare `acceptedTypes`, and single-input ports reject additional edges unless `multiple: true` is set. See `PORT_TYPES.md` for the full type reference and output compatibility rules.
 
 ## Export
 

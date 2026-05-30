@@ -23,10 +23,12 @@ The current app uses plain CSS variables rather than Tailwind utility classes, s
 ## Color Rules
 
 - Prefer black, white, and neutral gray surfaces.
-- Do not use blue as a primary UI color.
+- Do not use blue as a primary UI color for general chrome.
 - Do not use purple, teal, or saturated accent themes for editor chrome.
 - Keep semantic color rare. Destructive/error states may use the theme destructive token.
-- Graph nodes, edges, ports, menus, panels, buttons, and inspector controls should remain neutral.
+- Graph nodes, menus, panels, buttons, and inspector controls should remain neutral.
+- The selected node/edge affordance is the Byrsa-inspired dashed dashboard-blue treatment.
+- Ports may use small type-color accents on knobs and swatches only; do not expand those colors into node fills or editor chrome.
 
 ## Surface Rules
 
@@ -39,16 +41,18 @@ The current app uses plain CSS variables rather than Tailwind utility classes, s
 ## Node Graph Rules
 
 - Nodes use a single flat surface color.
-- Selected nodes use a white border/outline, not a colored glow.
-- Ports are neutral gray by default and white when connected.
-- Edges are neutral gray by default and white when selected.
-- Type information should come from labels and structure, not color coding.
+- Selected nodes use a dashed dashboard-blue border treatment.
+- Selected edges use the same dashboard-blue stroke and dash treatment as selected nodes.
+- Ports sit halfway outside the node border and use type-colored borders; connected ports fill with the same type color.
+- Type information should come from labels, typed tooltips, docs, and small port color accents.
+- Configuration should live on the node that owns it. Use grouped node-local parameter panels with expand-all and collapse-all controls rather than exposing editor configuration in the right sidebar.
+- Provide an Auto layout toolbar action for restoring a readable ranked graph without manual dragging.
 
 ## Layout Rules
 
 - Prioritize dense, scannable tool surfaces.
 - Avoid landing-page composition inside the app.
-- Keep the graph canvas central, with the node palette on the left and preview/inspector/export on the right.
+- Keep the graph canvas central, with the node palette on the left and preview/diagnostics/export on the right.
 - Text must fit within nodes, buttons, and panels without overlap.
 
 ## Interaction Rules
@@ -62,5 +66,5 @@ The current app uses plain CSS variables rather than Tailwind utility classes, s
 
 - Put reusable theme values in CSS variables.
 - Use flat colors from `--background`, `--card`, `--popover`, `--secondary`, `--border`, `--muted-foreground`, and `--foreground`.
-- Do not hard-code blue/teal/purple accents in app CSS.
-- When adding shared UI tokens, keep `packages/ui` neutral unless a feature explicitly needs semantic color.
+- Do not hard-code accent colors in component CSS when they belong in shared type or theme tokens.
+- Keep broad app chrome neutral; selection blue and port type colors are the intentional graph exceptions.

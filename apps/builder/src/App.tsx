@@ -114,6 +114,14 @@ type NodeMenuState = {
   readonly y: number;
 };
 
+type SelectionDragState = {
+  readonly active: boolean;
+  readonly additive: boolean;
+  readonly current: { readonly x: number; readonly y: number };
+  readonly pointerId: number;
+  readonly start: { readonly x: number; readonly y: number };
+};
+
 const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph";
 const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
   activeParticles: 0,
@@ -124,6 +132,7 @@ const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
 const HISTORY_LIMIT = 100;
 const QUICK_ADD_WIDTH = 280;
 const QUICK_ADD_ANCHOR_Y = 42;
+const SELECTION_DRAG_THRESHOLD = 4;
 const AUTO_LAYOUT_NODE_WIDTH = 260;
 const AUTO_LAYOUT_RANK_HORIZONTAL_GAP = 160;
 const AUTO_LAYOUT_NODE_VERTICAL_GAP = 42;
@@ -231,7 +240,7 @@ function graphToFlowEdges(graph: GraphDocument, selectedEdgeIds: ReadonlySet<str
       target: edge.target,
       targetHandle: edge.targetPort,
       focusable: true,
-      selectable: true,
+      selectable: false,
       selected,
       interactionWidth: 24,
       ariaLabel: `${edge.source}.${edge.sourcePort} to ${edge.target}.${edge.targetPort}`,
@@ -817,6 +826,89 @@ function edgeSelectionChanges(changes: readonly EdgeChange<FlowEdge>[]) {
   );
 }
 
+function areStringSetsEqual(first: ReadonlySet<string>, second: ReadonlySet<string>): boolean {
+  if (first.size !== second.size) {
+    return false;
+  }
+  for (const value of first) {
+    if (!second.has(value)) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function clientRectFromPoints(
+  start: { readonly x: number; readonly y: number },
+  current: { readonly x: number; readonly y: number },
+) {
+  return {
+    bottom: Math.max(start.y, current.y),
+    height: Math.abs(current.y - start.y),
+    left: Math.min(start.x, current.x),
+    right: Math.max(start.x, current.x),
+    top: Math.min(start.y, current.y),
+    width: Math.abs(current.x - start.x),
+  };
+}
+
+function clientRectsIntersect(
+  first: {
+    readonly bottom: number;
+    readonly left: number;
+    readonly right: number;
+    readonly top: number;
+  },
+  second: {
+    readonly bottom: number;
+    readonly left: number;
+    readonly right: number;
+    readonly top: number;
+  },
+): boolean {
+  return (
+    first.left <= second.right &&
+    first.right >= second.left &&
+    first.top <= second.bottom &&
+    first.bottom >= second.top
+  );
+}
+
+function isCanvasSelectionStartTarget(target: EventTarget | null): boolean {
+  if (!(target instanceof Element)) {
+    return false;
+  }
+  if (
+    target.closest(
+      ".react-flow__node, .react-flow__edge, .react-flow__handle, .react-flow__controls, .quick-add, .node-context-menu, .pending-quick-add-edge",
+    )
+  ) {
+    return false;
+  }
+  return Boolean(target.closest(".react-flow__pane"));
+}
+
+function selectedNodeIdsInClientRect(
+  root: HTMLElement | null,
+  selectionRect: ReturnType<typeof clientRectFromPoints>,
+): Set<string> {
+  const ids = new Set<string>();
+  if (!root || selectionRect.width === 0 || selectionRect.height === 0) {
+    return ids;
+  }
+  for (const nodeElement of root.querySelectorAll<HTMLElement>(".react-flow__node[data-id]")) {
+    const id = nodeElement.dataset.id;
+    if (!id) {
+      continue;
+    }
+    const nodeRect = nodeElement.getBoundingClientRect();
+    if (clientRectsIntersect(selectionRect, nodeRect)) {
+      ids.add(id);
+    }
+  }
+  return ids;
+}
+
 function App() {
   const [graph, setGraph] = useState<GraphDocument>(() => loadInitialGraph());
   const [selectedNodeIds, setSelectedNodeIds] = useState<ReadonlySet<string>>(new Set());
@@ -828,6 +920,7 @@ function App() {
   const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [canvasBounds, setCanvasBounds] = useState<DOMRect | null>(null);
+  const [selectionDrag, setSelectionDragState] = useState<SelectionDragState | null>(null);
   const [previewTelemetry, setPreviewTelemetry] = useState<PreviewTelemetry>({
     ...EMPTY_PREVIEW_STATS,
     webgpuLabel: "Checking",
@@ -838,6 +931,8 @@ function App() {
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canvasPanelRef = useRef<HTMLDivElement | null>(null);
   const pendingMoveSnapshotRef = useRef<EditorSnapshot | null>(null);
+  const selectionBaseNodeIdsRef = useRef<ReadonlySet<string>>(new Set());
+  const selectionDragRef = useRef<SelectionDragState | null>(null);
   const suppressNextNodeSelectionChangeRef = useRef(false);
   const suppressNextPaneClickRef = useRef(false);
   const undoStackRef = useRef<EditorSnapshot[]>([]);
@@ -848,6 +943,11 @@ function App() {
   >();
   const canUndo = historyRevision >= 0 && undoStackRef.current.length > 0;
   const canRedo = historyRevision >= 0 && redoStackRef.current.length > 0;
+
+  const setSelectionDrag = useCallback((next: SelectionDragState | null) => {
+    selectionDragRef.current = next;
+    setSelectionDragState(next);
+  }, []);
 
   const createSnapshot = useCallback(
     (sourceGraph: GraphDocument = graph): EditorSnapshot => ({
@@ -1287,17 +1387,85 @@ function App() {
       if (event.button === 1) {
         setIsMiddlePanning(true);
         event.currentTarget.setPointerCapture(event.pointerId);
+        return;
       }
+      if (event.button !== 0 || !event.isPrimary || !isCanvasSelectionStartTarget(event.target)) {
+        return;
+      }
+      const point = { x: event.clientX, y: event.clientY };
+      selectionBaseNodeIdsRef.current =
+        event.shiftKey || event.ctrlKey || event.metaKey
+          ? new Set(selectedNodeIds)
+          : new Set<string>();
+      setSelectionDrag({
+        active: false,
+        additive: event.shiftKey || event.ctrlKey || event.metaKey,
+        current: point,
+        pointerId: event.pointerId,
+        start: point,
+      });
+      event.currentTarget.setPointerCapture(event.pointerId);
+      setQuickAdd(null);
+      setNodeMenu(null);
     },
-    [],
+    [selectedNodeIds, setSelectionDrag],
   );
 
-  const handleCanvasPointerEndCapture = useCallback((event: React.PointerEvent<HTMLDivElement>) => {
-    setIsMiddlePanning(false);
-    if (event.currentTarget.hasPointerCapture(event.pointerId)) {
-      event.currentTarget.releasePointerCapture(event.pointerId);
-    }
-  }, []);
+  const handleCanvasPointerMoveCapture = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const drag = selectionDragRef.current;
+      if (!drag || drag.pointerId !== event.pointerId) {
+        return;
+      }
+      const current = { x: event.clientX, y: event.clientY };
+      const distance = Math.hypot(current.x - drag.start.x, current.y - drag.start.y);
+      const active = drag.active || distance > SELECTION_DRAG_THRESHOLD;
+      const nextDrag = { ...drag, active, current };
+      setSelectionDrag(nextDrag);
+      if (!active) {
+        return;
+      }
+
+      event.preventDefault();
+      event.stopPropagation();
+      const selectedIds = selectedNodeIdsInClientRect(
+        canvasPanelRef.current,
+        clientRectFromPoints(nextDrag.start, nextDrag.current),
+      );
+      const nextSelectedNodeIds = nextDrag.additive
+        ? new Set([...selectionBaseNodeIdsRef.current, ...selectedIds])
+        : selectedIds;
+      setSelectedNodeIds((currentSelection) =>
+        areStringSetsEqual(currentSelection, nextSelectedNodeIds)
+          ? currentSelection
+          : nextSelectedNodeIds,
+      );
+      setSelectedEdgeIds((currentSelection) =>
+        currentSelection.size === 0 ? currentSelection : new Set<string>(),
+      );
+    },
+    [setSelectionDrag],
+  );
+
+  const handleCanvasPointerEndCapture = useCallback(
+    (event: React.PointerEvent<HTMLDivElement>) => {
+      const drag = selectionDragRef.current;
+      if (drag?.pointerId === event.pointerId) {
+        if (drag.active) {
+          suppressNextPaneClickRef.current = true;
+          window.setTimeout(() => {
+            suppressNextPaneClickRef.current = false;
+          }, 160);
+        }
+        setSelectionDrag(null);
+      }
+      setIsMiddlePanning(false);
+      if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+        event.currentTarget.releasePointerCapture(event.pointerId);
+      }
+    },
+    [setSelectionDrag],
+  );
 
   const focusSelection = useCallback(() => {
     const selectedNodeList = graph.nodes
@@ -1618,6 +1786,7 @@ function App() {
           onDrop={handleDrop}
           onPointerCancelCapture={handleCanvasPointerEndCapture}
           onPointerDownCapture={handleCanvasPointerDownCapture}
+          onPointerMoveCapture={handleCanvasPointerMoveCapture}
           onPointerUpCapture={handleCanvasPointerEndCapture}
         >
           <ReactFlow<FlowNode, FlowEdge>
@@ -1654,12 +1823,16 @@ function App() {
             autoPanOnNodeFocus
             elevateNodesOnSelect={false}
             panOnDrag={[1]}
+            selectionKeyCode={null}
             selectionMode={SelectionMode.Partial}
-            selectionOnDrag
+            selectionOnDrag={false}
           >
             <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
             <Controls />
           </ReactFlow>
+          {selectionDrag?.active ? (
+            <CanvasSelectionRect drag={selectionDrag} bounds={canvasBounds} />
+          ) : null}
           {pendingQuickAddPath ? (
             <svg className="pending-quick-add-edge" aria-hidden="true">
               <path d={pendingQuickAddPath} />
@@ -1880,11 +2053,14 @@ function ShortcutDialog({
                 <span>{shortcut.description}</span>
               </div>
               <div className="shortcut-keys">
-                {shortcut.keys.map((combo) => (
-                  <span key={combo} className="shortcut-combo">
-                    {combo.split(" + ").map((key) => (
-                      <kbd key={key}>{key}</kbd>
-                    ))}
+                {shortcut.keys.map((combo, index) => (
+                  <span key={combo} className="shortcut-combo-group">
+                    {index > 0 ? <span className="shortcut-key-separator">/</span> : null}
+                    <span className="shortcut-combo">
+                      {combo.split(" + ").map((key) => (
+                        <kbd key={key}>{key}</kbd>
+                      ))}
+                    </span>
                   </span>
                 ))}
               </div>
@@ -1893,6 +2069,30 @@ function ShortcutDialog({
         </div>
       </section>
     </div>
+  );
+}
+
+function CanvasSelectionRect({
+  bounds,
+  drag,
+}: {
+  readonly bounds: DOMRect | null;
+  readonly drag: SelectionDragState;
+}) {
+  if (!bounds) {
+    return null;
+  }
+  const rect = clientRectFromPoints(drag.start, drag.current);
+  return (
+    <div
+      className="canvas-selection-rect"
+      style={{
+        height: rect.height,
+        left: rect.left - bounds.left,
+        top: rect.top - bounds.top,
+        width: rect.width,
+      }}
+    />
   );
 }
 

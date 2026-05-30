@@ -342,6 +342,15 @@ button {
   box-shadow: 0 0 18px rgba(96, 165, 250, 0.16);
 }
 
+.canvas-selection-rect {
+  position: absolute;
+  z-index: 8;
+  pointer-events: none;
+  border: 1px dashed var(--selection-blue);
+  background: rgba(96, 165, 250, 0.14);
+  box-shadow: 0 0 18px rgba(96, 165, 250, 0.16);
+}
+
 .react-flow__controls {
   overflow: hidden;
   border: 1px solid var(--border);
@@ -928,6 +937,17 @@ button {
   flex-wrap: wrap;
   justify-content: flex-end;
   gap: 5px;
+}
+
+.shortcut-combo-group {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+}
+
+.shortcut-key-separator {
+  color: var(--muted-foreground);
+  font-size: 11px;
 }
 
 .shortcut-combo {

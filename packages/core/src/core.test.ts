@@ -99,7 +99,7 @@ describe("@threefx/core", () => {
 
     const spawnRatePort = registry.get("emitter.sphere")?.ports.find((port) => port.id === "spawnRate");
     expect(spawnRatePort).toMatchObject({
-      defaultValue: 640,
+      defaultValue: 720,
       direction: "input",
       effectParameterId: "spawnRate",
       group: "Emission",
@@ -199,7 +199,7 @@ describe("@threefx/core", () => {
     expect(first.ir?.nodes.map((node) => node.id)).toContain("volume_render");
     expect(first.ir?.runtimeConfig.emitters).toHaveLength(1);
     expect(first.ir?.runtimeConfig.forces.length).toBeGreaterThanOrEqual(2);
-    expect(first.ir?.runtimeConfig.solver.advectionMode).toBe("trilinear");
+    expect(first.ir?.runtimeConfig.solver.advectionMode).toBe("maccormack");
   });
 
   it("compiles stable runtime config arrays for multiple emitters, forces, and obstacles", () => {

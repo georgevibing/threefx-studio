@@ -60,6 +60,11 @@ export const portTypeTones: Record<string, Tone> = {
     background: "rgba(249, 115, 22, 0.13)",
     border: "rgba(249, 115, 22, 0.54)",
   },
+  obstacle: {
+    accent: "#f87171",
+    background: "rgba(248, 113, 113, 0.13)",
+    border: "rgba(248, 113, 113, 0.54)",
+  },
   quality: {
     accent: "#c084fc",
     background: "rgba(192, 132, 252, 0.13)",

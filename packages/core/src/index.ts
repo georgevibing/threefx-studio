@@ -5,6 +5,7 @@ export * from "./parameterResolution";
 export * from "./ports";
 export * from "./preset";
 export * from "./registry";
+export * from "./runtimeConfig";
 export * from "./serialization";
 export * from "./stableJson";
 export * from "./types";

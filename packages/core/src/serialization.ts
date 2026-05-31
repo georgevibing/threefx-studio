@@ -7,6 +7,6 @@ export function serializeGraphDocument(graph: GraphDocument): string {
 }
 
 export function deserializeGraphDocument(source: string): ValidationResult {
-  const parsed = JSON.parse(source) as GraphDocument;
+  const parsed = cloneJson(JSON.parse(source)) as GraphDocument;
   return validateGraphDocument(parsed);
 }

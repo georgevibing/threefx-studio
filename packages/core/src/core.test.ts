@@ -2,19 +2,33 @@ import { describe, expect, it } from "vitest";
 import {
   canAssignPortType,
   compileGraphToIR,
+  createDefaultWispySmokeParams,
   createNodeRegistry,
   createWispySmokeGraph,
+  createWispySmokeRuntimeConfig,
   deserializeGraphDocument,
   isEditableValuePort,
   resolveWispySmokeParameterValues,
   serializeGraphDocument,
   THREEFX_GRAPH_SCHEMA_VERSION,
+  THREEFX_IR_SCHEMA_VERSION,
   validateGraphDocument,
   WISPY_SMOKE_PARAMETER_METADATA,
   type GraphDocument,
 } from "./index";
 
 describe("@threefx/core", () => {
+  it("keeps current graph and IR schemas at v1 without migrations", () => {
+    expect(THREEFX_GRAPH_SCHEMA_VERSION).toBe(1);
+    expect(THREEFX_IR_SCHEMA_VERSION).toBe(1);
+
+    const unsupported = deserializeGraphDocument(
+      JSON.stringify({ ...createWispySmokeGraph(), schemaVersion: 2 }),
+    );
+    expect(unsupported.valid).toBe(false);
+    expect(unsupported.diagnostics.some((entry) => entry.path === "schemaVersion")).toBe(true);
+  });
+
   it("serializes and deserializes the graph schema", () => {
     const graph = createWispySmokeGraph();
     const result = deserializeGraphDocument(serializeGraphDocument(graph));
@@ -53,9 +67,9 @@ describe("@threefx/core", () => {
 
   it("instantiates nodes from the registry", () => {
     const registry = createNodeRegistry();
-    const node = registry.instantiate("noise.curl", "curl", [10, 20]);
-    expect(node.label).toBe("Curl Noise");
-    expect(registry.get("noise.curl")?.ports.some((port) => port.id === "field")).toBe(true);
+    const node = registry.instantiate("field.curl", "curl", [10, 20]);
+    expect(node.label).toBe("Curl Field");
+    expect(registry.get("field.curl")?.ports.some((port) => port.id === "field")).toBe(true);
   });
 
   it("registers generic primitive parameter nodes and value input ports", () => {
@@ -83,9 +97,9 @@ describe("@threefx/core", () => {
       "high",
     );
 
-    const spawnRatePort = registry.get("emitter.volume")?.ports.find((port) => port.id === "spawnRate");
+    const spawnRatePort = registry.get("emitter.sphere")?.ports.find((port) => port.id === "spawnRate");
     expect(spawnRatePort).toMatchObject({
-      defaultValue: 118,
+      defaultValue: 1200,
       direction: "input",
       effectParameterId: "spawnRate",
       group: "Emission",
@@ -107,6 +121,8 @@ describe("@threefx/core", () => {
         "detailScale",
         "detailStrength",
         "detailSpeed",
+        "detailOctaves",
+        "shadowStrength",
       ]),
     );
   });
@@ -126,7 +142,7 @@ describe("@threefx/core", () => {
 
     const missingStructure = {
       ...graph,
-      edges: graph.edges.filter((edge) => edge.id !== "emitter_to_buoyancy"),
+      edges: graph.edges.filter((edge) => edge.id !== "emitter_to_solver"),
     };
     const result = validateGraphDocument(missingStructure);
     expect(result.valid).toBe(false);
@@ -181,6 +197,71 @@ describe("@threefx/core", () => {
       solver: "eulerian-fluid-grid",
     });
     expect(first.ir?.nodes.map((node) => node.id)).toContain("volume_render");
+    expect(first.ir?.runtimeConfig.emitters).toHaveLength(1);
+    expect(first.ir?.runtimeConfig.forces.length).toBeGreaterThanOrEqual(2);
+    expect(first.ir?.runtimeConfig.solver.advectionMode).toBe("trilinear");
+  });
+
+  it("compiles stable runtime config arrays for multiple emitters, forces, and obstacles", () => {
+    const base = createWispySmokeGraph();
+    const graph: GraphDocument = {
+      ...base,
+      nodes: [
+        ...base.nodes,
+        {
+          id: "box_emitter",
+          type: "emitter.box",
+          label: "Box Emitter",
+          position: [100, 100],
+          parameters: { spawnRate: 84, sourcePosition: [0.25, 0.1, 0] },
+        },
+        {
+          id: "wind_force",
+          type: "force.wind",
+          label: "Wind Force",
+          position: [200, 100],
+          parameters: { wind: [0.2, 0.1, -0.05] },
+        },
+        {
+          id: "sphere_obstacle",
+          type: "obstacle.sphere",
+          label: "Sphere Obstacle",
+          position: [300, 100],
+          parameters: { obstaclePosition: [0, 1, 0], obstacleRadius: 0.4 },
+        },
+      ],
+      edges: [
+        ...base.edges,
+        {
+          id: "box_emitter_to_solver",
+          source: "box_emitter",
+          sourcePort: "emitter",
+          target: "fluid_solver",
+          targetPort: "emitter",
+        },
+        {
+          id: "wind_force_to_solver",
+          source: "wind_force",
+          sourcePort: "force",
+          target: "fluid_solver",
+          targetPort: "force",
+        },
+        {
+          id: "sphere_obstacle_to_solver",
+          source: "sphere_obstacle",
+          sourcePort: "obstacle",
+          target: "fluid_solver",
+          targetPort: "obstacle",
+        },
+      ],
+    };
+
+    const first = compileGraphToIR(graph).ir?.runtimeConfig;
+    const second = compileGraphToIR(graph).ir?.runtimeConfig;
+    expect(first).toEqual(second);
+    expect(first?.emitters.map((entry) => entry.id)).toEqual(["box_emitter", "emitter"]);
+    expect(first?.forces.map((entry) => entry.id)).toEqual(["buoyancy", "vortex", "wind_force"]);
+    expect(first?.obstacles.map((entry) => entry.id)).toEqual(["sphere_obstacle"]);
   });
 
   it("exposes typed parameter metadata", () => {
@@ -200,6 +281,9 @@ describe("@threefx/core", () => {
         "detailScale",
         "detailStrength",
         "detailSpeed",
+        "detailOctaves",
+        "sourceGlowColor",
+        "debugView",
         "quality",
         "backendMode",
       ]),
@@ -210,6 +294,26 @@ describe("@threefx/core", () => {
     expect(
       WISPY_SMOKE_PARAMETER_METADATA.find((parameter) => parameter.id === "renderStepScale")
         ?.defaultValue,
-    ).toBe(0.42);
+    ).toBe(1.25);
+  });
+
+  it("keeps runtime config fallbacks aligned with metadata defaults", () => {
+    const defaults = createDefaultWispySmokeParams();
+    const config = createWispySmokeRuntimeConfig();
+    const emitter = config.emitters[0];
+
+    expect(config.solver.gridResolution).toBe(defaults.gridResolution);
+    expect(config.render.renderStepScale).toBe(defaults.renderStepScale);
+    expect(config.render.detailOctaves).toBe(defaults.detailOctaves);
+    expect(config.render.detailSpeed).toBe(defaults.detailSpeed);
+    expect(config.render.smokeColor).toBe(defaults.color);
+    expect(config.sourceGlow.enabled).toBe(defaults.sourceGlowEnabled);
+    expect(config.sourceGlow.color).toBe(defaults.sourceGlowColor);
+    expect(config.sourceGlow.intensity).toBe(defaults.sourceGlowIntensity);
+    expect(emitter?.falloff).toBe(defaults.sourceFalloff);
+    expect(emitter?.noiseScale).toBe(defaults.sourceNoiseScale);
+    expect(emitter?.noiseStrength).toBe(defaults.sourceNoiseStrength);
+    expect(emitter?.radius).toBe(defaults.radius);
+    expect(emitter?.velocity).toEqual(defaults.sourceVelocity);
   });
 });

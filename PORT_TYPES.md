@@ -50,6 +50,7 @@ Editable input ports declare value metadata directly on the `PortDefinition`, in
 | `emitter`    | Emitter objects produced by emitter nodes                                | `emitter`               |
 | `force`      | Force objects produced by force nodes                                    | `force`                 |
 | `field`      | Field/noise objects produced by field nodes                              | `field`                 |
+| `obstacle`   | Collision or mask objects consumed by fluid solver nodes                 | `obstacle`              |
 | `simulation` | Simulation outputs consumed by render nodes                              | `simulation`            |
 | `volume`     | Volume resources or volume data                                          | `volume`                |
 | `transform`  | Object transform data                                                    | `transform`             |

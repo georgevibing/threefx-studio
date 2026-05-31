@@ -24,7 +24,7 @@ Open the Vite URL printed by pnpm. The builder app lives in `apps/builder`.
 
 ## Edit Wispy Smoke
 
-The default graph is the Wispy Smoke preset. Use the node palette or right-click the canvas to add nodes. Drag between compatible ports to connect nodes. Drag from a port into empty canvas space to open a filtered node menu. Use the Auto layout toolbar button to rearrange nodes into ranked, non-overlapping lanes. Node configuration lives in grouped parameter panels on each node. Unlinked value inputs can be edited inline; linked value inputs show the upstream source button instead. Reusable primitive parameter nodes such as `parameter.float`, `parameter.color`, and `parameter.quality` carry custom labels and values when you want a value to drive one or more inputs. The right rail is reserved for preview, graph diagnostics, and export.
+The default graph is the Wispy Smoke preset. It is built from generic fluid nodes: sphere or box emitters, curl/fBm fields, buoyancy/wind/vortex forces, optional sphere or box obstacles, a 3D fluid solver, a volume renderer, source glow, and debug view. Use the node palette or right-click the canvas to add nodes. Drag between compatible ports to connect nodes. Drag from a port into empty canvas space to open a filtered node menu. Use the Auto layout toolbar button to rearrange nodes into ranked, non-overlapping lanes. Node configuration lives in grouped parameter panels on each node. Unlinked value inputs can be edited inline; linked value inputs show the upstream source button instead. Reusable primitive parameter nodes such as `parameter.float`, `parameter.color`, and `parameter.quality` carry custom labels and values when you want a value to drive one or more inputs. The right rail is reserved for preview, graph diagnostics, and export.
 
 Parameter changes update the preview immediately. While hovering the preview, middle-drag orbits, `Shift` + middle-drag pans, and the scroll wheel zooms within clamped limits. On macOS, `Option` + left-drag orbits, `Option` + `Cmd` + left-drag pans, and `Option` + `Control` + left-drag zooms. Use the preview maximize button for a larger modal view; `Esc` restores it. Save/load uses browser local storage, and graph JSON can also be imported or downloaded.
 
@@ -54,27 +54,38 @@ const smoke = new WispySmokeVFX({
   quality: "high",
   gridResolution: "high",
   worldPosition: [0, 0, 0],
-  spawnRate: 118,
-  lifetime: 3.8,
-  radius: 0.32,
-  height: 5.1,
-  turbulence: 0.38,
-  density: 1.04,
-  baseDensity: 1.12,
-  pressureIterations: 18,
-  diffusion: 0.018,
-  sourceTemperature: 1.28,
-  emissionColor: "#ff7a2f",
-  emissionIntensity: 1.1,
-  absorption: 1.35,
-  scattering: 0.68,
-  detailScale: 3.6,
-  detailStrength: 0.46,
-  detailSpeed: 0.28,
-  opacity: 0.74,
-  renderStepScale: 0.42,
-  shadowQuality: 8,
-  color: "#c6cfd2",
+  spawnRate: 1200,
+  lifetime: 4.5,
+  radius: 0.38,
+  height: 6,
+  density: 0.85,
+  riseSpeed: 1.8,
+  buoyantLift: 2.2,
+  turbulence: 1.65,
+  curlStrength: 1.4,
+  vorticityConfinement: 0.85,
+  wind: [0.1, 0.3, 0.05],
+  pressureIterations: 12,
+  diffusion: 0.01,
+  diffusionIterations: 1,
+  advectionMode: "trilinear",
+  sourceTemperature: 1.1,
+  emissionColor: "#d7e7ef",
+  emissionIntensity: 0.35,
+  absorption: 6,
+  scattering: 2.2,
+  detailScale: 22,
+  detailStrength: 3.5,
+  detailSpeed: 0.65,
+  detailOctaves: 4,
+  sourceGlowEnabled: false,
+  sourceGlowColor: "#c7d2d8",
+  sourceGlowIntensity: 0.35,
+  renderStepScale: 1.25,
+  shadowQuality: 12,
+  shadowStrength: 1.25,
+  debugView: "final",
+  color: "#c7d2d8",
 });
 
 scene.add(smoke.object3D);
@@ -109,7 +120,7 @@ pnpm format
 
 ## Current Limitations
 
-- The high-quality smoke backend requires a WebGPU renderer. It runs a low-resolution cubic Eulerian grid (`32^3` through `96^3`) with TSL compute passes for density/velocity advection, source injection, buoyancy/wind, vorticity confinement, pressure projection, dissipation, and render-volume packing, then raymarches the simulated density with absorption, scattering, source glow, self-shadow sampling, and procedural detail. The compatibility backend is intentionally lower fidelity.
+- The high-quality smoke backend requires a WebGPU renderer. It runs a low-resolution cubic Eulerian grid (`32^3` through `96^3`) with TSL compute passes for source injection, advection, optional diffusion, buoyancy/wind, curl and vorticity confinement, obstacle masking, divergence, Jacobi pressure solve, projection, and render-volume packing. Rendering raymarches simulated density/temperature with absorption, scattering, source glow, self-shadow sampling, procedural detail, and debug views. The compatibility backend is intentionally lower fidelity.
 - The graph compiler currently targets the Wispy Smoke vertical slice only.
 - Exported code is TypeScript source, not an npm package artifact yet.
 - Visual regression and deeper GPU performance benchmarks are planned but not implemented.

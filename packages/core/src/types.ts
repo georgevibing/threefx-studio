@@ -40,6 +40,127 @@ export type QualityPreset = "low" | "medium" | "high" | "cinematic";
 
 export type WispySmokeBackendMode = "auto" | "webgpu" | "compat";
 export type WispySmokeGridResolution = "low" | "medium" | "high" | "cinematic";
+export type WispySmokeAdvectionMode = "nearest" | "trilinear" | "maccormack";
+export type WispySmokeBlendMode = "normal" | "additive";
+export type WispySmokeDebugView =
+  | "final"
+  | "density"
+  | "temperature"
+  | "velocity"
+  | "divergence"
+  | "pressure"
+  | "obstacles"
+  | "bounds";
+export type WispySmokeEmitterShape = "sphere" | "box";
+export type WispySmokeFieldType = "curl" | "fbm";
+export type WispySmokeForceType = "buoyancy" | "wind" | "vortex";
+export type WispySmokeObstacleShape = "sphere" | "box";
+
+export interface WispySmokeEmitterConfig {
+  readonly id: string;
+  readonly shape: WispySmokeEmitterShape;
+  readonly density: number;
+  readonly falloff: number;
+  readonly lifetime: number;
+  readonly noiseScale: number;
+  readonly noiseStrength: number;
+  readonly position: Vec3;
+  readonly radius: number;
+  readonly scale: Vec3;
+  readonly spawnRate: number;
+  readonly temperature: number;
+  readonly velocity: Vec3;
+}
+
+export interface WispySmokeForceConfig {
+  readonly id: string;
+  readonly type: WispySmokeForceType;
+  readonly buoyantLift: number;
+  readonly position: Vec3;
+  readonly radius: number;
+  readonly riseSpeed: number;
+  readonly strength: number;
+  readonly wind: Vec3;
+}
+
+export interface WispySmokeFieldConfig {
+  readonly id: string;
+  readonly type: WispySmokeFieldType;
+  readonly bands: number;
+  readonly curlStrength: number;
+  readonly scale: number;
+  readonly speed: number;
+  readonly strength: number;
+  readonly vorticityConfinement: number;
+}
+
+export interface WispySmokeObstacleConfig {
+  readonly id: string;
+  readonly shape: WispySmokeObstacleShape;
+  readonly position: Vec3;
+  readonly radius: number;
+  readonly scale: Vec3;
+  readonly softness: number;
+}
+
+export interface WispySmokeSolverConfig {
+  readonly advectionMode: WispySmokeAdvectionMode;
+  readonly backendMode: WispySmokeBackendMode;
+  readonly densityDissipation: number;
+  readonly diffusion: number;
+  readonly diffusionIterations: number;
+  readonly gridResolution: WispySmokeGridResolution;
+  readonly pressureIterations: number;
+  readonly quality: QualityPreset;
+  readonly seed: number;
+  readonly velocityDissipation: number;
+}
+
+export interface WispySmokeRenderConfig {
+  readonly absorption: number;
+  readonly baseDensity: number;
+  readonly blendMode: WispySmokeBlendMode;
+  readonly detailOctaves: number;
+  readonly detailScale: number;
+  readonly detailSpeed: number;
+  readonly detailStrength: number;
+  readonly opacity: number;
+  readonly opacityRamp: CurveValue;
+  readonly plumeTaper: number;
+  readonly renderStepScale: number;
+  readonly scattering: number;
+  readonly shadowQuality: number;
+  readonly shadowStrength: number;
+  readonly smokeColor: ColorValue;
+  readonly softness: number;
+}
+
+export interface WispySmokeSourceGlowConfig {
+  readonly blendMode: WispySmokeBlendMode;
+  readonly color: ColorValue;
+  readonly enabled: boolean;
+  readonly intensity: number;
+  readonly radius: number;
+  readonly softness: number;
+}
+
+export interface WispySmokeDebugConfig {
+  readonly view: WispySmokeDebugView;
+}
+
+export interface WispySmokeRuntimeConfig {
+  readonly debug: WispySmokeDebugConfig;
+  readonly emitters: readonly WispySmokeEmitterConfig[];
+  readonly fields: readonly WispySmokeFieldConfig[];
+  readonly forces: readonly WispySmokeForceConfig[];
+  readonly obstacles: readonly WispySmokeObstacleConfig[];
+  readonly render: WispySmokeRenderConfig;
+  readonly solver: WispySmokeSolverConfig;
+  readonly sourceGlow: WispySmokeSourceGlowConfig;
+  readonly transform: {
+    readonly worldPosition: Vec3;
+  };
+}
 
 export interface ParameterMetadata {
   readonly id: string;
@@ -71,6 +192,7 @@ export type PortType =
   | "emitter"
   | "force"
   | "field"
+  | "obstacle"
   | "simulation"
   | "volume"
   | "transform"
@@ -101,10 +223,12 @@ export type NodeKind =
   | "output"
   | "emitter"
   | "parameter"
-  | "noise"
+  | "field"
   | "force"
+  | "obstacle"
   | "simulation"
   | "render"
+  | "debug"
   | "transform"
   | "quality";
 
@@ -198,6 +322,7 @@ export interface EffectIR {
     readonly renderModel: "volume-raymarch";
     readonly solver: "eulerian-fluid-grid";
   };
+  readonly runtimeConfig: WispySmokeRuntimeConfig;
   readonly parameters: readonly ParameterMetadata[];
   readonly parameterValues: ParameterMap;
   readonly nodes: readonly EffectIRNode[];

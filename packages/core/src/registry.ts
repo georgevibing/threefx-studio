@@ -49,9 +49,9 @@ const PARAMETER_NODE_LABELS = {
   vec3: "Vector 3",
 } as const satisfies Record<ParameterType, string>;
 
-const PARAMETER_NODE_OPTIONS: Partial<Record<ParameterType, readonly string[]>> = {
+const PARAMETER_NODE_OPTIONS = {
   quality: ["low", "medium", "high", "cinematic"],
-};
+} as const satisfies Partial<Record<ParameterType, readonly string[]>>;
 
 function parameterNodeDefinition(type: ParameterType): NodeDefinition {
   const portType = parameterTypeToPortType(type);
@@ -78,7 +78,7 @@ function parameterNodeDefinition(type: ParameterType): NodeDefinition {
 
 function wispyInput(
   id: string,
-  options: Partial<Pick<PortDefinition, "acceptedTypes" | "label" | "required">> = {},
+  options: Partial<Pick<PortDefinition, "acceptedTypes" | "label" | "multiple" | "required">> = {},
 ): PortDefinition {
   const parameter = getParameterMetadata(id);
   if (!parameter) {
@@ -89,7 +89,7 @@ function wispyInput(
 
 function parameterInput(
   parameter: ParameterMetadata,
-  options: Partial<Pick<PortDefinition, "acceptedTypes" | "label" | "required">> = {},
+  options: Partial<Pick<PortDefinition, "acceptedTypes" | "label" | "multiple" | "required">> = {},
 ): PortDefinition {
   return {
     id: parameter.id,
@@ -100,6 +100,7 @@ function parameterInput(
     defaultValue: parameter.defaultValue,
     effectParameterId: parameter.id,
     group: parameter.group,
+    ...(options.multiple !== undefined ? { multiple: options.multiple } : {}),
     ...(options.acceptedTypes ? { acceptedTypes: options.acceptedTypes } : {}),
     ...(parameter.description ? { description: parameter.description } : {}),
     ...(parameter.min !== undefined ? { min: parameter.min } : {}),
@@ -122,6 +123,23 @@ function defaultParametersForDefinition(definition: NodeDefinition): ParameterMa
   });
 }
 
+const emitterPorts = [
+  flowIn,
+  flowOut,
+  wispyInput("spawnRate", { label: "Rate" }),
+  wispyInput("lifetime", { label: "Life" }),
+  wispyInput("density"),
+  wispyInput("radius"),
+  wispyInput("sourcePosition", { label: "Position" }),
+  wispyInput("sourceScale", { label: "Scale" }),
+  wispyInput("sourceVelocity", { label: "Velocity" }),
+  wispyInput("sourceTemperature", { label: "Temp" }),
+  wispyInput("sourceFalloff", { label: "Falloff" }),
+  wispyInput("sourceNoiseScale", { label: "Noise Scale" }),
+  wispyInput("sourceNoiseStrength", { label: "Noise" }),
+  { id: "emitter", label: "Emitter", direction: "output", type: "emitter", multiple: true },
+] as const satisfies readonly PortDefinition[];
+
 export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
   {
     type: "output.three-webgpu",
@@ -131,37 +149,52 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     description: "Final effect output consumed by preview and exporter.",
     ports: [
       flowIn,
-      { id: "effect", label: "Effect", direction: "input", type: "render", required: true },
+      { id: "effect", label: "Effect", direction: "input", type: "render", required: true, multiple: true },
     ],
   },
   {
-    type: "emitter.volume",
+    type: "emitter.sphere",
     kind: "emitter",
-    label: "Emitter",
+    label: "Sphere Emitter",
     category: "Emission",
-    description: "Defines the spherical density and temperature source for the fluid grid.",
-    ports: [
-      flowIn,
-      flowOut,
-      wispyInput("spawnRate", { label: "Spawn" }),
-      wispyInput("lifetime", { label: "Life" }),
-      wispyInput("radius"),
-      wispyInput("height"),
-      wispyInput("sourceTemperature", { label: "Source Temp" }),
-      { id: "emitter", label: "Emitter", direction: "output", type: "emitter", multiple: true },
-    ],
+    description: "Injects density, temperature, and initial velocity from a spherical source.",
+    ports: emitterPorts,
   },
   {
-    type: "noise.curl",
-    kind: "noise",
-    label: "Curl Noise",
+    type: "emitter.box",
+    kind: "emitter",
+    label: "Box Emitter",
+    category: "Emission",
+    description: "Injects density, temperature, and initial velocity from a box source.",
+    ports: emitterPorts,
+  },
+  {
+    type: "field.curl",
+    kind: "field",
+    label: "Curl Field",
     category: "Fields",
-    description: "Procedural turbulence and vorticity controls for fluid-grid motion.",
+    description: "Adds procedural curl and vorticity controls for fluid-grid motion.",
     ports: [
       wispyInput("turbulence"),
       wispyInput("turbulenceBands", { label: "Bands" }),
       wispyInput("curlStrength", { label: "Curl" }),
       wispyInput("vorticityConfinement", { label: "Vorticity" }),
+      wispyInput("detailScale", { label: "Scale" }),
+      wispyInput("detailSpeed", { label: "Speed" }),
+      { id: "field", label: "Field", direction: "output", type: "field", multiple: true },
+    ],
+  },
+  {
+    type: "field.fbm",
+    kind: "field",
+    label: "fBm Detail Field",
+    category: "Fields",
+    description: "Provides multi-octave detail modulation shared by simulation and rendering.",
+    ports: [
+      wispyInput("detailScale", { label: "Scale" }),
+      wispyInput("detailStrength", { label: "Strength" }),
+      wispyInput("detailSpeed", { label: "Speed" }),
+      wispyInput("detailOctaves", { label: "Octaves" }),
       { id: "field", label: "Field", direction: "output", type: "field", multiple: true },
     ],
   },
@@ -170,9 +203,9 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     kind: "force",
     label: "Buoyancy Force",
     category: "Forces",
-    description: "Applies upward velocity and optional wind.",
+    description: "Applies heat-driven upward velocity and directional wind.",
     ports: [
-      { id: "emitter", label: "Emitter", direction: "input", type: "emitter", required: true },
+      { id: "emitter", label: "Emitter", direction: "input", type: "emitter", required: false, multiple: true },
       wispyInput("riseSpeed", { label: "Rise" }),
       wispyInput("buoyantLift", { label: "Lift" }),
       wispyInput("wind"),
@@ -180,25 +213,79 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     ],
   },
   {
-    type: "simulation.advection",
+    type: "force.wind",
+    kind: "force",
+    label: "Wind Force",
+    category: "Forces",
+    description: "Applies a directional velocity bias to active smoke.",
+    ports: [
+      wispyInput("wind"),
+      { id: "force", label: "Force", direction: "output", type: "force", multiple: true },
+    ],
+  },
+  {
+    type: "force.vortex",
+    kind: "force",
+    label: "Vortex Force",
+    category: "Forces",
+    description: "Adds a local signed swirl force around a configurable center.",
+    ports: [
+      wispyInput("vortexPosition", { label: "Position" }),
+      wispyInput("vortexRadius", { label: "Radius" }),
+      wispyInput("vortexStrength", { label: "Strength" }),
+      { id: "force", label: "Force", direction: "output", type: "force", multiple: true },
+    ],
+  },
+  {
+    type: "obstacle.sphere",
+    kind: "obstacle",
+    label: "Sphere Obstacle",
+    category: "Obstacles",
+    description: "Masks velocity and density against a spherical solid boundary.",
+    ports: [
+      wispyInput("obstaclePosition", { label: "Position" }),
+      wispyInput("obstacleRadius", { label: "Radius" }),
+      wispyInput("obstacleScale", { label: "Scale" }),
+      wispyInput("obstacleSoftness", { label: "Softness" }),
+      { id: "obstacle", label: "Obstacle", direction: "output", type: "obstacle", multiple: true },
+    ],
+  },
+  {
+    type: "obstacle.box",
+    kind: "obstacle",
+    label: "Box Obstacle",
+    category: "Obstacles",
+    description: "Masks velocity and density against a box-shaped solid boundary.",
+    ports: [
+      wispyInput("obstaclePosition", { label: "Position" }),
+      wispyInput("obstacleScale", { label: "Scale" }),
+      wispyInput("obstacleSoftness", { label: "Softness" }),
+      { id: "obstacle", label: "Obstacle", direction: "output", type: "obstacle", multiple: true },
+    ],
+  },
+  {
+    type: "simulation.fluid-grid",
     kind: "simulation",
     label: "3D Fluid Solver",
     category: "Simulation",
-    description:
-      "Runs Eulerian grid advection, vorticity, pressure projection, diffusion, and dissipation.",
+    description: "Runs Eulerian grid source injection, advection, diffusion, vorticity, projection, and packing.",
     ports: [
       flowIn,
       flowOut,
-      { id: "emitter", label: "Emitter", direction: "input", type: "emitter", required: true },
-      { id: "force", label: "Force", direction: "input", type: "force", required: true },
-      { id: "field", label: "Field", direction: "input", type: "field", required: true },
-      wispyInput("density"),
-      wispyInput("densityDissipation"),
-      wispyInput("velocityDissipation"),
-      wispyInput("dissipation"),
+      { id: "emitter", label: "Emitters", direction: "input", type: "emitter", required: true, multiple: true },
+      { id: "force", label: "Forces", direction: "input", type: "force", required: false, multiple: true },
+      { id: "field", label: "Fields", direction: "input", type: "field", required: false, multiple: true },
+      { id: "obstacle", label: "Obstacles", direction: "input", type: "obstacle", required: false, multiple: true },
+      wispyInput("densityDissipation", { label: "Density Fade" }),
+      wispyInput("velocityDissipation", { label: "Velocity Fade" }),
       wispyInput("diffusion"),
+      wispyInput("diffusionIterations", { label: "Diffusion Steps" }),
       wispyInput("pressureIterations", { label: "Pressure" }),
+      wispyInput("advectionMode", { label: "Advection" }),
       wispyInput("seed"),
+      wispyInput("quality"),
+      wispyInput("backendMode", { label: "Backend" }),
+      wispyInput("gridResolution", { label: "Grid" }),
       {
         id: "simulation",
         label: "Simulation",
@@ -211,23 +298,18 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
   {
     type: "render.volume",
     kind: "render",
-    label: "Volume Render",
+    label: "Volume Renderer",
     category: "Render",
-    description: "Raymarches simulated density and temperature with absorption and scattering.",
+    description: "Raymarches simulated density and temperature with configurable absorption and scattering.",
     ports: [
       flowIn,
       flowOut,
-      {
-        id: "simulation",
-        label: "Simulation",
-        direction: "input",
-        type: "simulation",
-        required: true,
-      },
+      { id: "simulation", label: "Simulation", direction: "input", type: "simulation", required: true },
       wispyInput("color", { label: "Tint" }),
       wispyInput("opacity"),
       wispyInput("softness", { label: "Soft" }),
       wispyInput("size"),
+      wispyInput("height"),
       wispyInput("baseDensity", { label: "Base" }),
       wispyInput("opacityRamp", { label: "Ramp" }),
       wispyInput("plumeTaper", { label: "Taper" }),
@@ -238,9 +320,42 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
       wispyInput("detailScale", { label: "Detail Scale" }),
       wispyInput("detailStrength", { label: "Detail" }),
       wispyInput("detailSpeed", { label: "Detail Speed" }),
+      wispyInput("detailOctaves", { label: "Octaves" }),
+      wispyInput("shadowQuality", { label: "Shadow Steps" }),
+      wispyInput("shadowStrength", { label: "Shadow" }),
       wispyInput("renderStepScale", { label: "Step Scale" }),
-      wispyInput("shadowQuality", { label: "Shadows" }),
+      wispyInput("blendMode", { label: "Blend" }),
       { id: "render", label: "Render", direction: "output", type: "render", multiple: true },
+    ],
+  },
+  {
+    type: "render.source-glow",
+    kind: "render",
+    label: "Source Glow",
+    category: "Render",
+    description: "Renders generic source glow primitives driven by emitter positions.",
+    ports: [
+      flowIn,
+      flowOut,
+      { id: "emitter", label: "Emitters", direction: "input", type: "emitter", required: true, multiple: true },
+      wispyInput("sourceGlowEnabled", { label: "Enabled" }),
+      wispyInput("sourceGlowColor", { label: "Color" }),
+      wispyInput("sourceGlowIntensity", { label: "Intensity" }),
+      wispyInput("sourceGlowRadius", { label: "Radius" }),
+      wispyInput("sourceGlowSoftness", { label: "Softness" }),
+      { id: "render", label: "Render", direction: "output", type: "render", multiple: true },
+    ],
+  },
+  {
+    type: "debug.view",
+    kind: "debug",
+    label: "Fluid Debug View",
+    category: "Debug",
+    description: "Selects final or diagnostic views for density, velocity, pressure, obstacles, and bounds.",
+    ports: [
+      { id: "simulation", label: "Simulation", direction: "input", type: "simulation", required: true },
+      wispyInput("debugView", { label: "View" }),
+      { id: "render", label: "Debug", direction: "output", type: "render", multiple: true },
     ],
   },
   {
@@ -265,11 +380,11 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     kind: "quality",
     label: "Quality Preset",
     category: "Runtime",
-    description: "Selects backend and runtime budget for the exported smoke effect.",
+    description: "Chooses grid, raymarch, and fallback runtime budgets.",
     ports: [
       wispyInput("quality"),
-      wispyInput("backendMode", { label: "Backend" }),
       wispyInput("gridResolution", { label: "Grid" }),
+      wispyInput("backendMode", { label: "Backend" }),
       { id: "preset", label: "Preset", direction: "output", type: "quality", multiple: true },
     ],
   },
@@ -348,7 +463,7 @@ export function getDefaultParameterNodeValue(type: ParameterType): ParameterValu
 }
 
 export function getParameterNodeOptions(type: ParameterType): readonly string[] | undefined {
-  return PARAMETER_NODE_OPTIONS[type];
+  return type === "quality" ? PARAMETER_NODE_OPTIONS.quality : undefined;
 }
 
 export const defaultNodeRegistry = createNodeRegistry();

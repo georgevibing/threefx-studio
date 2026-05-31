@@ -10,7 +10,7 @@ function hasParameterValue(
   return Boolean(parameters) && Object.prototype.hasOwnProperty.call(parameters, id);
 }
 
-function incomingEdgeByTarget(graph: GraphDocument): Map<string, GraphEdge> {
+export function incomingEdgeByTarget(graph: GraphDocument): Map<string, GraphEdge> {
   const result = new Map<string, GraphEdge>();
   for (const edge of [...graph.edges].sort((left, right) => left.id.localeCompare(right.id))) {
     const key = `${edge.target}:${edge.targetPort}`;
@@ -21,7 +21,7 @@ function incomingEdgeByTarget(graph: GraphDocument): Map<string, GraphEdge> {
   return result;
 }
 
-function sourceValue(
+export function sourceValue(
   edge: GraphEdge,
   nodesById: ReadonlyMap<string, GraphNode>,
   registry: NodeRegistry,
@@ -38,6 +38,37 @@ function sourceValue(
     return cloneJson(source.parameters["value"]);
   }
   return undefined;
+}
+
+export function resolveNodeInputValues(
+  graph: GraphDocument,
+  node: GraphNode,
+  registry: NodeRegistry = defaultNodeRegistry,
+): ParameterMap {
+  const definition = registry.get(node.type);
+  if (!definition) {
+    return cloneJson(node.parameters ?? {});
+  }
+  const values: ParameterMap = cloneJson(node.parameters ?? {});
+  const nodesById = new Map(graph.nodes.map((entry) => [entry.id, entry]));
+  const incoming = incomingEdgeByTarget(graph);
+  for (const port of definition.ports) {
+    if (!isEditableValuePort(port)) {
+      continue;
+    }
+    const edge = incoming.get(`${node.id}:${port.id}`);
+    if (edge) {
+      const value = sourceValue(edge, nodesById, registry);
+      if (value !== undefined) {
+        values[port.id] = value;
+      }
+      continue;
+    }
+    if (!Object.prototype.hasOwnProperty.call(values, port.id) && port.defaultValue !== undefined) {
+      values[port.id] = cloneJson(port.defaultValue);
+    }
+  }
+  return values;
 }
 
 export function resolveWispySmokeParameterValues(

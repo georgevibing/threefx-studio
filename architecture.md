@@ -25,7 +25,7 @@ Main pipeline:
 
 ## Editor Architecture
 
-The builder uses React Flow for canvas interactions. React Flow nodes and edges are projections of `GraphDocument`. Node positions are persisted back to the graph document, but React Flow handles are not part of core. The editor writes node-local inline values, primitive parameter node labels, and primitive parameter node `value` fields back to the graph. Preview receives resolved typed `WispySmokeVFXParams`.
+The builder uses React Flow for canvas interactions. React Flow nodes and edges are projections of `GraphDocument`. Node positions are persisted back to the graph document, but React Flow handles are not part of core. The editor writes node-local inline values, primitive parameter node labels, and primitive parameter node `value` fields back to the graph. Preview receives resolved typed `WispySmokeVFXParams` plus the canonical compiled runtime config.
 
 ## Graph Schema
 
@@ -41,7 +41,7 @@ Primitive data is not modeled as one node type per effect parameter. Plain value
 
 Effect nodes own their editable inputs. A value input declares its type and UI metadata on the input `PortDefinition`: default value, group, description, min/max/step, unit, options, and optional `effectParameterId`. If the input is unlinked, the authoring value lives inline at `node.parameters[portId]`. If it is linked, the inline control is hidden and the upstream primitive parameter node supplies the value.
 
-Unique node or port types are reserved for domain objects and structured graph contracts such as `emitter`, `force`, `field`, `simulation`, `render`, and future non-primitive structs. Do not introduce bespoke node types for individual floats, strings, colors, booleans, vectors, curves, or quality presets.
+Unique node or port types are reserved for domain objects and structured graph contracts such as `emitter`, `force`, `field`, `obstacle`, `simulation`, `render`, and future non-primitive structs. Do not introduce bespoke node types for individual floats, strings, colors, booleans, vectors, curves, or quality presets.
 
 ## Port/Type System
 
@@ -53,11 +53,11 @@ Validation checks schema version, graph kind, supported effect type, duplicate i
 
 ## Compiler Pipeline
 
-The compiler validates first. Valid graphs are topologically ordered, normalized, and hashed with stable JSON. Wispy Smoke parameters are resolved deterministically in this order: built-in defaults, `graph.parameters` fallback, node-local inline values, then linked primitive parameter source values. The output is `EffectIR`, containing parameter metadata, resolved parameter values, ordered nodes, deterministic connections, and a graph hash.
+The compiler validates first. Valid graphs are topologically ordered, normalized, and hashed with stable JSON. Wispy Smoke parameters are resolved deterministically in this order: built-in defaults, `graph.parameters` fallback, node-local inline values, then linked primitive parameter source values. The output is `EffectIR`, containing parameter metadata, resolved parameter values, ordered nodes, deterministic connections, a graph hash, and a canonical `runtimeConfig` with `emitters`, `forces`, `fields`, `obstacles`, `solver`, `render`, `sourceGlow`, `debug`, and transform data.
 
 ## Effect IR
 
-Effect IR is the boundary between authoring and runtime/export. It is deterministic, renderer-neutral where practical, and intentionally smaller than UI state. Exporters should consume IR, not React Flow objects.
+Effect IR is the boundary between authoring and runtime/export. It is deterministic, renderer-neutral where practical, and intentionally smaller than UI state. Runtime and exporter code consume the canonical `runtimeConfig`; flat `parameterValues` remain available for inspector/export readability and simple constructor overrides, not as a compatibility layer.
 
 ## Runtime Architecture
 
@@ -74,7 +74,7 @@ interface VFXEffect<TParams> {
 }
 ```
 
-Wispy Smoke currently selects a WebGPU Eulerian fluid-grid backend when a WebGPU renderer is available, and falls back to a conservative Three.js particle preview otherwise. The WebGPU path owns a reusable `FluidGrid3D` runtime with TSL compute kernels for source injection, semi-Lagrangian advection, buoyancy and wind, vorticity confinement, divergence, Jacobi pressure solve, projection, dissipation, and render-volume packing. Rendering raymarches the packed simulated density/temperature volume with Beer-Lambert absorption, scattering, source emission, self-shadow sampling, and procedural detail modulation. Quality presets map to cubic simulation budgets: `low=32^3`, `medium=48^3`, `high=64^3`, and `cinematic=96^3`.
+Wispy Smoke currently selects a WebGPU Eulerian fluid-grid backend when a WebGPU renderer is available, and falls back to a conservative Three.js particle preview otherwise. The WebGPU path owns a reusable `FluidGrid3D` runtime with TSL compute kernels for obstacle masks, source injection, semi-Lagrangian or MacCormack advection, optional Jacobi diffusion, buoyancy and wind, curl/vorticity confinement, divergence, Jacobi pressure solve, projection, dissipation, and render-volume packing. Rendering raymarches the packed simulated density/temperature volume with Beer-Lambert absorption, scattering, source emission, self-shadow sampling, deterministic procedural detail, source glow, and debug views. Quality presets map to cubic simulation budgets: `low=32^3`, `medium=48^3`, `high=64^3`, and `cinematic=96^3`.
 
 ## Three.js WebGPU Boundaries
 
@@ -86,7 +86,7 @@ The exporter accepts Effect IR and emits standalone files. Generated code must n
 
 ## Generated Code
 
-Generated classes include typed params, default values, lifecycle methods, and a usage snippet. The Wispy Smoke export owns its local helper types, WebGPU fluid solver, raymarched volume renderer, and compatibility particle fallback so it can be pasted into another Three.js project without ThreeFX package imports. Comments are limited to useful integration context.
+Generated classes include typed params, canonical runtime config defaults, lifecycle methods, `setRuntimeConfig`, and a usage snippet. The Wispy Smoke export owns its local helper types, WebGPU fluid solver, raymarched volume renderer, source glow primitive, debug metadata, and compatibility particle fallback so it can be pasted into another Three.js project without ThreeFX package imports. Comments are limited to useful integration context.
 
 ## Testing Strategy
 
@@ -106,7 +106,7 @@ Core diagnostics are structured and user-readable. Builder UI displays errors be
 
 ## Serialization And Versioning
 
-Graph documents include `schemaVersion`, but pre-public breaking graph changes update the current schema in place rather than accumulating migrations. Effect IR has its own version so exporter changes do not force graph changes.
+Graph documents and Effect IR currently use schema version `1`. Because the project is pre-public, breaking graph and IR changes update this current v1 shape in place rather than accumulating migrations, aliases, or legacy adapters.
 
 ## Extension Points
 

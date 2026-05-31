@@ -45,6 +45,7 @@ import * as THREE from "three";
 import {
   canConnectPorts,
   compileGraphToIR,
+  createWispySmokeRuntimeConfig,
   createWispySmokeGraph,
   defaultNodeRegistry,
   deserializeGraphDocument,
@@ -68,6 +69,7 @@ import {
   type ParameterValue,
   type PortDefinition,
   type PortType,
+  type WispySmokeRuntimeConfig,
 } from "@threefx/core";
 import { WispySmokeVFX, type WispySmokeVFXParams, type WispySmokeVFXStats } from "@threefx/effects";
 import { createExportZip, exportEffectToTypeScript } from "@threefx/exporter";
@@ -146,14 +148,21 @@ type SelectionDragState = {
   readonly start: { readonly x: number; readonly y: number };
 };
 
-const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph:v2";
+const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph:v1";
 const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
+  activeDebugView: "final",
+  advectionMode: "trilinear",
   backend: "compat",
+  diffusionIterations: 0,
+  emitterCount: 0,
   fallbackActive: true,
+  fieldCount: 0,
   fps: 0,
+  forceCount: 0,
   frameMs: 0,
   gridCells: 0,
   gridResolution: [0, 0, 0],
+  obstacleCount: 0,
   pressureIterations: 0,
   renderSteps: 0,
   requestedBackend: "auto",
@@ -174,38 +183,34 @@ const AUTO_LAYOUT_KIND_RANK: Record<string, number> = {
   quality: 1,
   transform: 1,
   emitter: 2,
-  noise: 2,
+  field: 2,
   force: 3,
+  obstacle: 3,
   simulation: 4,
-  render: 5,
-  output: 6,
+  debug: 5,
+  render: 6,
+  output: 7,
 };
 const AUTO_LAYOUT_KIND_ORDER: Record<string, number> = {
   output: 0,
   emitter: 1,
-  noise: 2,
+  field: 2,
   force: 3,
-  simulation: 4,
-  render: 5,
-  transform: 6,
-  quality: 7,
-  parameter: 8,
+  obstacle: 4,
+  simulation: 5,
+  debug: 6,
+  render: 7,
+  transform: 8,
+  quality: 9,
+  parameter: 10,
 };
 const PREVIEW_WEBGPU_PIXEL_RATIO_CAP = 0.66;
 const PREVIEW_WEBGL_PIXEL_RATIO_CAP = 2;
 
 function loadInitialGraph(): GraphDocument {
-  const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-  if (saved) {
-    try {
-      const result = deserializeGraphDocument(saved);
-      if (result.valid) {
-        return result.graph;
-      }
-    } catch {
-      localStorage.removeItem(LOCAL_STORAGE_KEY);
-    }
-  }
+  // Pre-public graph changes should boot from the current preset so stale local
+  // experiments do not mask runtime/default changes. Manual load still imports
+  // saved graph data explicitly.
   return createWispySmokeGraph();
 }
 
@@ -482,7 +487,7 @@ function estimateAutoLayoutNodeSize(
   const inputCount = definition.ports.filter((port) => port.direction === "input").length;
   const outputCount = definition.ports.filter((port) => port.direction === "output").length;
   const portRows = Math.max(inputCount, outputCount, 2);
-  const portGridHeight = Math.max(48, portRows * 18 + Math.max(0, portRows - 1) * 6 + 16);
+  const portGridHeight = Math.max(48, portRows * 18 + Math.max(0, portRows - 1) * 10 + 24);
   const parameters = definition.ports.filter(isEditableValuePort);
   const groupCount = new Set(parameters.map((parameter) => parameter.group || "Parameters")).size;
   const parameterPanelHeight = parameters.length > 0 ? 37 + groupCount * 32 : 0;
@@ -1877,7 +1882,16 @@ function App() {
     [canvasBounds, collectMeasuredNodeSizes, flowToScreenPosition, graph, quickAdd],
   );
 
-  const previewParams = resolveWispySmokeParameterValues(graph) as unknown as WispySmokeVFXParams;
+  const previewParams = useMemo(
+    () => resolveWispySmokeParameterValues(graph) as unknown as WispySmokeVFXParams,
+    [graph],
+  );
+  const previewConfig = useMemo(
+    () =>
+      compileResult.ir?.runtimeConfig ??
+      createWispySmokeRuntimeConfig(previewParams as unknown as ParameterMap),
+    [compileResult.ir, previewParams],
+  );
 
   return (
     <main className="app-shell" tabIndex={-1}>
@@ -1998,6 +2012,7 @@ function App() {
           <PreviewViewport
             isApple={isApple}
             params={previewParams}
+            runtimeConfig={previewConfig}
             onTelemetry={setPreviewTelemetry}
           />
           <PerformancePanel telemetry={previewTelemetry} />
@@ -2795,7 +2810,7 @@ function PortKnob({
       data-port-connected={connected ? "true" : "false"}
       data-port-direction={port.direction}
       data-port-type={port.type}
-      style={{ ...portToneStyle(port.type), top: 58 + index * 24 }}
+      style={{ ...portToneStyle(port.type), top: 58 + index * 28 }}
       title={describePort(port)}
     />
   );
@@ -3027,6 +3042,10 @@ function PerformancePanel({ telemetry }: { readonly telemetry: PreviewTelemetry 
           label="Solver"
           value={telemetry.solverPasses > 0 ? `${telemetry.solverPasses} passes` : "--"}
         />
+        <Metric label="Sources" value={String(telemetry.emitterCount)} />
+        <Metric label="Forces" value={`${telemetry.forceCount}/${telemetry.obstacleCount}`} />
+        <Metric label="Mode" value={telemetry.advectionMode} />
+        <Metric label="Debug" value={telemetry.activeDebugView} />
         <Metric
           label="Sim"
           value={telemetry.simulationMs > 0 ? `${telemetry.simulationMs.toFixed(1)} ms` : "--"}
@@ -3565,9 +3584,9 @@ type PreviewCameraState = {
   readonly target: THREE.Vector3;
 };
 
-const PREVIEW_CAMERA_FOV = 44;
-const PREVIEW_CAMERA_MIN_DISTANCE = 2;
-const PREVIEW_CAMERA_MAX_DISTANCE = 10.5;
+const PREVIEW_CAMERA_FOV = 42;
+const PREVIEW_CAMERA_MIN_DISTANCE = 1.35;
+const PREVIEW_CAMERA_MAX_DISTANCE = 8.5;
 const PREVIEW_POINTER_ORBIT_SPEED = 0.012;
 const PREVIEW_POINTER_ZOOM_SPEED = 0.01;
 const PREVIEW_WHEEL_ZOOM_SPEED = 0.001;
@@ -3575,7 +3594,7 @@ const PREVIEW_PITCH_EPSILON = 0.01;
 const PREVIEW_CAMERA_NAVIGATION_RATE = 18;
 
 function createPreviewCameraState(camera: THREE.PerspectiveCamera): PreviewCameraState {
-  const target = new THREE.Vector3(0, 1.8, 0);
+  const target = new THREE.Vector3(0, 2.55, 0);
   const spherical = new THREE.Spherical().setFromVector3(
     new THREE.Vector3().subVectors(camera.position, target),
   );
@@ -3761,10 +3780,12 @@ function normalizedWheelDeltaY(
 function PreviewViewport({
   isApple = false,
   params,
+  runtimeConfig,
   onTelemetry,
 }: {
   readonly isApple: boolean;
   readonly params: WispySmokeVFXParams;
+  readonly runtimeConfig: WispySmokeRuntimeConfig;
   readonly onTelemetry: (telemetry: PreviewTelemetry) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
@@ -3773,6 +3794,8 @@ function PreviewViewport({
   const cameraRenderedStateRef = useRef<PreviewCameraState | null>(null);
   const cameraDragRef = useRef<PreviewCameraDragState | null>(null);
   const effectRef = useRef<WispySmokeVFX | null>(null);
+  const paramsRef = useRef(params);
+  const runtimeConfigRef = useRef(runtimeConfig);
   const rendererRef = useRef<PreviewRenderer | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
@@ -3809,8 +3832,8 @@ function PreviewViewport({
 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(PREVIEW_CAMERA_FOV, 1, 0.1, 80);
-      camera.position.set(0, 2.28, 6.15);
-      camera.lookAt(0, 2.18, 0);
+      camera.position.set(0, 2.7, 4.75);
+      camera.lookAt(0, 2.55, 0);
       const cameraDesiredState = createPreviewCameraState(camera);
       const cameraRenderedState = clonePreviewCameraState(cameraDesiredState);
       cameraRef.current = camera;
@@ -3822,10 +3845,14 @@ function PreviewViewport({
       grid.position.y = -0.02;
       for (const material of Array.isArray(grid.material) ? grid.material : [grid.material]) {
         material.transparent = true;
-        material.opacity = 0.26;
+        material.opacity = 0.18;
       }
       scene.add(grid);
-      const effect = new WispySmokeVFX({ ...params, renderer });
+      const effect = new WispySmokeVFX({
+        ...paramsRef.current,
+        config: runtimeConfigRef.current,
+        renderer,
+      });
       scene.add(effect.object3D);
       effectRef.current = effect;
       onTelemetry({
@@ -3925,8 +3952,11 @@ function PreviewViewport({
   }, [onTelemetry, webgpu.supported]);
 
   useEffect(() => {
+    paramsRef.current = params;
+    runtimeConfigRef.current = runtimeConfig;
     effectRef.current?.setParams(params);
-  }, [params]);
+    effectRef.current?.setRuntimeConfig(runtimeConfig);
+  }, [params, runtimeConfig]);
 
   const endPreviewNavigation = useCallback((event?: React.PointerEvent<HTMLCanvasElement>) => {
     const drag = cameraDragRef.current;

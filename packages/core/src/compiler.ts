@@ -2,6 +2,7 @@ import { cloneJson } from "./clone";
 import { WISPY_SMOKE_PARAMETER_METADATA } from "./parameters";
 import { resolveWispySmokeParameterValues } from "./parameterResolution";
 import { defaultNodeRegistry, type NodeRegistry } from "./registry";
+import { compileWispySmokeRuntimeConfig } from "./runtimeConfig";
 import { fnv1aHash, stableJson } from "./stableJson";
 import {
   THREEFX_IR_SCHEMA_VERSION,
@@ -11,9 +12,6 @@ import {
   type EffectIRConnection,
   type EffectIRNode,
   type GraphDocument,
-  type QualityPreset,
-  type WispySmokeBackendMode,
-  type WispySmokeGridResolution,
 } from "./types";
 import { validateGraphDocument } from "./validation";
 
@@ -93,14 +91,16 @@ export function compileGraphToIR(
     .sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
 
   const parameterValues = resolveWispySmokeParameterValues(graph, registry);
+  const runtimeConfig = compileWispySmokeRuntimeConfig(graph, registry);
 
   const hashSource = stableJson({
     schemaVersion: graph.schemaVersion,
     effectType: graph.effectType,
-    nodes: orderedNodes,
-    connections,
-    parameters: parameterValues,
-  });
+      nodes: orderedNodes,
+      connections,
+      parameters: parameterValues,
+      runtimeConfig,
+    });
 
   const ir: EffectIR = {
     schemaVersion: THREEFX_IR_SCHEMA_VERSION,
@@ -109,13 +109,14 @@ export function compileGraphToIR(
     effectName: graph.name,
     graphHash: fnv1aHash(hashSource),
     runtime: {
-      backendMode: String(parameterValues.backendMode ?? "auto") as WispySmokeBackendMode,
+      backendMode: runtimeConfig.solver.backendMode,
       fallback: "compat",
-      gridResolution: String(parameterValues.gridResolution ?? "medium") as WispySmokeGridResolution,
-      quality: String(parameterValues.quality ?? "high") as QualityPreset,
+      gridResolution: runtimeConfig.solver.gridResolution,
+      quality: runtimeConfig.solver.quality,
       renderModel: "volume-raymarch",
       solver: "eulerian-fluid-grid",
     },
+    runtimeConfig,
     parameters: WISPY_SMOKE_PARAMETER_METADATA,
     parameterValues: cloneJson(parameterValues),
     nodes: orderedNodes,

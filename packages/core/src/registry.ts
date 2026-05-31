@@ -1,7 +1,17 @@
 import { cloneJson } from "./clone";
 import { parameterTypeToPortType } from "./ports";
-import { WISPY_SMOKE_PARAMETER_METADATA } from "./parameters";
-import type { GraphNode, NodeDefinition, ParameterMetadata, ParameterMap, Vec2 } from "./types";
+import { getParameterMetadata } from "./parameters";
+import type {
+  GraphNode,
+  NodeDefinition,
+  ParameterMap,
+  ParameterMetadata,
+  ParameterType,
+  ParameterValue,
+  PortDefinition,
+  PortType,
+  Vec2,
+} from "./types";
 
 const flowIn = { id: "flowIn", label: "In", direction: "input", type: "flow" } as const;
 const flowOut = {
@@ -12,37 +22,103 @@ const flowOut = {
   multiple: true,
 } as const;
 
-function parameterNodeDefinition(parameter: ParameterMetadata): NodeDefinition {
+const PARAMETER_NODE_DEFAULTS = {
+  bool: false,
+  color: "#ffffff",
+  curve: [
+    { time: 0, value: 1 },
+    { time: 1, value: 1 },
+  ],
+  float: 0,
+  int: 0,
+  quality: "high",
+  string: "",
+  vec2: [0, 0],
+  vec3: [0, 0, 0],
+} as const satisfies Record<ParameterType, ParameterValue>;
+
+const PARAMETER_NODE_LABELS = {
+  bool: "Boolean",
+  color: "Color",
+  curve: "Curve",
+  float: "Float",
+  int: "Integer",
+  quality: "Quality",
+  string: "String",
+  vec2: "Vector 2",
+  vec3: "Vector 3",
+} as const satisfies Record<ParameterType, string>;
+
+const PARAMETER_NODE_OPTIONS: Partial<Record<ParameterType, readonly string[]>> = {
+  quality: ["low", "medium", "high", "cinematic"],
+};
+
+function parameterNodeDefinition(type: ParameterType): NodeDefinition {
+  const portType = parameterTypeToPortType(type);
   return {
-    type: `parameter.${parameter.id}`,
+    type: `parameter.${type}`,
     kind: "parameter",
-    label: parameter.label,
+    label: PARAMETER_NODE_LABELS[type],
     category: "Parameters",
-    description: parameter.description ?? `Exposes the ${parameter.label} parameter to the graph.`,
+    description: `Exposes a reusable ${portType} value to compatible node inputs.`,
     ports: [
       {
         id: "value",
         label: "Value",
         direction: "output",
-        type: parameterTypeToPortType(parameter.type),
+        type: portType,
         multiple: true,
       },
     ],
     defaultParameters: {
-      parameterId: parameter.id,
-      value: parameter.defaultValue,
+      value: PARAMETER_NODE_DEFAULTS[type],
     },
-    parameterMetadata: [parameter],
   };
 }
 
-function parameters(...ids: string[]): readonly ParameterMetadata[] {
-  const byId = new Map(
-    WISPY_SMOKE_PARAMETER_METADATA.map((parameter) => [parameter.id, parameter]),
-  );
-  return ids.flatMap((id) => {
-    const parameter = byId.get(id);
-    return parameter ? [parameter] : [];
+function wispyInput(
+  id: string,
+  options: Partial<Pick<PortDefinition, "acceptedTypes" | "label" | "required">> = {},
+): PortDefinition {
+  const parameter = getParameterMetadata(id);
+  if (!parameter) {
+    throw new Error(`Unknown Wispy Smoke parameter '${id}'.`);
+  }
+  return parameterInput(parameter, options);
+}
+
+function parameterInput(
+  parameter: ParameterMetadata,
+  options: Partial<Pick<PortDefinition, "acceptedTypes" | "label" | "required">> = {},
+): PortDefinition {
+  return {
+    id: parameter.id,
+    label: options.label ?? parameter.label,
+    direction: "input",
+    type: parameterTypeToPortType(parameter.type),
+    required: options.required ?? true,
+    defaultValue: parameter.defaultValue,
+    effectParameterId: parameter.id,
+    group: parameter.group,
+    ...(options.acceptedTypes ? { acceptedTypes: options.acceptedTypes } : {}),
+    ...(parameter.description ? { description: parameter.description } : {}),
+    ...(parameter.min !== undefined ? { min: parameter.min } : {}),
+    ...(parameter.max !== undefined ? { max: parameter.max } : {}),
+    ...(parameter.step !== undefined ? { step: parameter.step } : {}),
+    ...(parameter.unit ? { unit: parameter.unit } : {}),
+    ...(parameter.options ? { options: parameter.options } : {}),
+  };
+}
+
+function defaultParametersForDefinition(definition: NodeDefinition): ParameterMap {
+  const portDefaults = Object.fromEntries(
+    definition.ports
+      .filter((port) => port.direction === "input" && port.defaultValue !== undefined)
+      .map((port) => [port.id, port.defaultValue]),
+  ) as ParameterMap;
+  return cloneJson({
+    ...portDefaults,
+    ...(definition.defaultParameters ?? {}),
   });
 }
 
@@ -67,22 +143,13 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     ports: [
       flowIn,
       flowOut,
-      { id: "spawnRate", label: "Spawn", direction: "input", type: "float", required: true },
-      { id: "lifetime", label: "Life", direction: "input", type: "float", required: true },
-      { id: "radius", label: "Radius", direction: "input", type: "float" },
+      wispyInput("spawnRate", { label: "Spawn" }),
+      wispyInput("lifetime", { label: "Life" }),
+      wispyInput("radius"),
+      wispyInput("height"),
+      wispyInput("sourceTemperature", { label: "Source Temp" }),
       { id: "emitter", label: "Emitter", direction: "output", type: "emitter", multiple: true },
     ],
-    defaultParameters: {
-      radius: 0.38,
-    },
-    parameterMetadata: parameters(
-      "spawnRate",
-      "lifetime",
-      "radius",
-      "height",
-      "sourceTemperature",
-      "emissionIntensity",
-    ),
   },
   {
     type: "noise.curl",
@@ -91,19 +158,12 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     category: "Fields",
     description: "Procedural turbulence and vorticity controls for fluid-grid motion.",
     ports: [
-      { id: "turbulence", label: "Turbulence", direction: "input", type: "float", required: true },
-      { id: "curlStrength", label: "Curl", direction: "input", type: "float", required: true },
+      wispyInput("turbulence"),
+      wispyInput("turbulenceBands", { label: "Bands" }),
+      wispyInput("curlStrength", { label: "Curl" }),
+      wispyInput("vorticityConfinement", { label: "Vorticity" }),
       { id: "field", label: "Field", direction: "output", type: "field", multiple: true },
     ],
-    parameterMetadata: parameters(
-      "turbulence",
-      "turbulenceBands",
-      "curlStrength",
-      "vorticityConfinement",
-      "detailScale",
-      "detailStrength",
-      "detailSpeed",
-    ),
   },
   {
     type: "force.buoyancy",
@@ -113,11 +173,11 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     description: "Applies upward velocity and optional wind.",
     ports: [
       { id: "emitter", label: "Emitter", direction: "input", type: "emitter", required: true },
-      { id: "riseSpeed", label: "Rise", direction: "input", type: "float", required: true },
-      { id: "wind", label: "Wind", direction: "input", type: "vec3" },
+      wispyInput("riseSpeed", { label: "Rise" }),
+      wispyInput("buoyantLift", { label: "Lift" }),
+      wispyInput("wind"),
       { id: "force", label: "Force", direction: "output", type: "force", multiple: true },
     ],
-    parameterMetadata: parameters("riseSpeed", "buoyantLift", "wind"),
   },
   {
     type: "simulation.advection",
@@ -132,14 +192,13 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
       { id: "emitter", label: "Emitter", direction: "input", type: "emitter", required: true },
       { id: "force", label: "Force", direction: "input", type: "force", required: true },
       { id: "field", label: "Field", direction: "input", type: "field", required: true },
-      { id: "density", label: "Density", direction: "input", type: "float", required: true },
-      {
-        id: "dissipation",
-        label: "Dissipation",
-        direction: "input",
-        type: "float",
-        required: true,
-      },
+      wispyInput("density"),
+      wispyInput("densityDissipation"),
+      wispyInput("velocityDissipation"),
+      wispyInput("dissipation"),
+      wispyInput("diffusion"),
+      wispyInput("pressureIterations", { label: "Pressure" }),
+      wispyInput("seed"),
       {
         id: "simulation",
         label: "Simulation",
@@ -148,15 +207,6 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
         multiple: true,
       },
     ],
-    parameterMetadata: parameters(
-      "density",
-      "densityDissipation",
-      "velocityDissipation",
-      "dissipation",
-      "diffusion",
-      "pressureIterations",
-      "seed",
-    ),
   },
   {
     type: "render.volume",
@@ -174,29 +224,24 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
         type: "simulation",
         required: true,
       },
-      { id: "color", label: "Color", direction: "input", type: "color", required: true },
-      { id: "opacity", label: "Opacity", direction: "input", type: "float", required: true },
-      { id: "softness", label: "Soft", direction: "input", type: "float", required: true },
+      wispyInput("color", { label: "Tint" }),
+      wispyInput("opacity"),
+      wispyInput("softness", { label: "Soft" }),
+      wispyInput("size"),
+      wispyInput("baseDensity", { label: "Base" }),
+      wispyInput("opacityRamp", { label: "Ramp" }),
+      wispyInput("plumeTaper", { label: "Taper" }),
+      wispyInput("emissionColor", { label: "Emission" }),
+      wispyInput("emissionIntensity", { label: "Glow" }),
+      wispyInput("absorption"),
+      wispyInput("scattering"),
+      wispyInput("detailScale", { label: "Detail Scale" }),
+      wispyInput("detailStrength", { label: "Detail" }),
+      wispyInput("detailSpeed", { label: "Detail Speed" }),
+      wispyInput("renderStepScale", { label: "Step Scale" }),
+      wispyInput("shadowQuality", { label: "Shadows" }),
       { id: "render", label: "Render", direction: "output", type: "render", multiple: true },
     ],
-    parameterMetadata: parameters(
-      "size",
-      "baseDensity",
-      "opacity",
-      "opacityRamp",
-      "softness",
-      "plumeTaper",
-      "color",
-      "emissionColor",
-      "emissionIntensity",
-      "absorption",
-      "scattering",
-      "detailScale",
-      "detailStrength",
-      "detailSpeed",
-      "renderStepScale",
-      "shadowQuality",
-    ),
   },
   {
     type: "transform.object",
@@ -205,7 +250,7 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     category: "Transform",
     description: "Places the generated effect object in world space.",
     ports: [
-      { id: "position", label: "Position", direction: "input", type: "vec3" },
+      wispyInput("worldPosition", { label: "Position" }),
       {
         id: "transform",
         label: "Transform",
@@ -214,7 +259,6 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
         multiple: true,
       },
     ],
-    parameterMetadata: parameters("worldPosition"),
   },
   {
     type: "quality.preset",
@@ -223,12 +267,21 @@ export const DEFAULT_NODE_DEFINITIONS: readonly NodeDefinition[] = [
     category: "Runtime",
     description: "Selects backend and runtime budget for the exported smoke effect.",
     ports: [
-      { id: "quality", label: "Quality", direction: "input", type: "quality", required: true },
+      wispyInput("quality"),
+      wispyInput("backendMode", { label: "Backend" }),
+      wispyInput("gridResolution", { label: "Grid" }),
       { id: "preset", label: "Preset", direction: "output", type: "quality", multiple: true },
     ],
-    parameterMetadata: parameters("quality", "backendMode", "gridResolution"),
   },
-  ...WISPY_SMOKE_PARAMETER_METADATA.map(parameterNodeDefinition),
+  parameterNodeDefinition("float"),
+  parameterNodeDefinition("int"),
+  parameterNodeDefinition("bool"),
+  parameterNodeDefinition("string"),
+  parameterNodeDefinition("color"),
+  parameterNodeDefinition("vec2"),
+  parameterNodeDefinition("vec3"),
+  parameterNodeDefinition("curve"),
+  parameterNodeDefinition("quality"),
 ];
 
 export interface NodeRegistry {
@@ -256,12 +309,46 @@ export function createNodeRegistry(
         position,
         enabled: true,
         parameters: cloneJson({
-          ...(definition.defaultParameters ?? {}),
+          ...defaultParametersForDefinition(definition),
           ...(parameters ?? {}),
         }),
       };
     },
   };
+}
+
+export function isEditableValuePort(port: PortDefinition): boolean {
+  if (port.direction !== "input") {
+    return false;
+  }
+  const primitiveTypes = new Set<PortType>([
+    "bool",
+    "color",
+    "curve",
+    "float",
+    "int",
+    "quality",
+    "string",
+    "vec2",
+    "vec3",
+  ]);
+  return primitiveTypes.has(port.type) && (port.defaultValue !== undefined || Boolean(port.effectParameterId));
+}
+
+export function getParameterNodeValueType(type: string): ParameterType | null {
+  if (!type.startsWith("parameter.")) {
+    return null;
+  }
+  const suffix = type.slice("parameter.".length);
+  return suffix in PARAMETER_NODE_DEFAULTS ? (suffix as ParameterType) : null;
+}
+
+export function getDefaultParameterNodeValue(type: ParameterType): ParameterValue {
+  return cloneJson(PARAMETER_NODE_DEFAULTS[type]);
+}
+
+export function getParameterNodeOptions(type: ParameterType): readonly string[] | undefined {
+  return PARAMETER_NODE_OPTIONS[type];
 }
 
 export const defaultNodeRegistry = createNodeRegistry();

@@ -46,6 +46,12 @@ pnpm build
 - Prefer deterministic output and stable ordering.
 - Use pnpm only.
 
+## Pre-Public Schema Changes
+
+- Until the first public release, prefer clean breaking changes over compatibility layers.
+- Do not add graph migrations, legacy schema adapters, or schema-version bumps for internal saved graph changes yet.
+- Update the current schema, presets, docs, and tests in place. Add migrations only after a public version exists that users need to load.
+
 ## Testing
 
 Add or update Vitest coverage when changing schema, ports, validation, compiler, exporter, runtime params, or generated code shape.

@@ -1,5 +1,6 @@
 import { cloneJson } from "./clone";
-import { createDefaultWispySmokeParams, WISPY_SMOKE_PARAMETER_METADATA } from "./parameters";
+import { WISPY_SMOKE_PARAMETER_METADATA } from "./parameters";
+import { resolveWispySmokeParameterValues } from "./parameterResolution";
 import { defaultNodeRegistry, type NodeRegistry } from "./registry";
 import { fnv1aHash, stableJson } from "./stableJson";
 import {
@@ -91,10 +92,7 @@ export function compileGraphToIR(
     }))
     .sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
 
-  const parameterValues = {
-    ...createDefaultWispySmokeParams(),
-    ...graph.parameters,
-  };
+  const parameterValues = resolveWispySmokeParameterValues(graph, registry);
 
   const hashSource = stableJson({
     schemaVersion: graph.schemaVersion,

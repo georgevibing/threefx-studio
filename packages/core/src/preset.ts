@@ -1,26 +1,39 @@
-import { createDefaultWispySmokeParams } from "./parameters";
+import { createDefaultWispySmokeParams, getParameterMetadata } from "./parameters";
 import { defaultNodeRegistry } from "./registry";
 import { THREEFX_GRAPH_SCHEMA_VERSION, type GraphDocument, type GraphEdge, type GraphNode } from "./types";
 
 const positions = {
-  spawnRate: [-720, -300],
-  lifetime: [-720, -210],
-  radius: [-720, -120],
-  density: [-720, 40],
-  dissipation: [-720, 130],
-  turbulence: [-720, 290],
-  curlStrength: [-720, 380],
-  riseSpeed: [-720, 540],
-  wind: [-720, 630],
-  color: [-720, 780],
-  opacity: [-720, 870],
-  softness: [-720, 960],
-  quality: [-190, -390],
-  worldPosition: [-190, -270],
+  spawnRate: [-760, -520],
+  lifetime: [-760, -340],
+  radius: [-760, -160],
+  density: [-760, 80],
+  dissipation: [-760, 260],
+  turbulence: [-760, 500],
+  curlStrength: [-760, 680],
+  riseSpeed: [-760, 920],
+  wind: [-760, 1100],
+  color: [-760, 1340],
+  opacity: [-760, 1520],
+  softness: [-760, 1700],
+  quality: [-220, -600],
+  worldPosition: [-220, -420],
 } as const satisfies Record<string, readonly [number, number]>;
 
 function node(type: string, id: string, position: readonly [number, number]): GraphNode {
   return defaultNodeRegistry.instantiate(type, id, position);
+}
+
+function parameterNode(parameterId: string, id: string, position: readonly [number, number]): GraphNode {
+  const parameter = getParameterMetadata(parameterId);
+  if (!parameter) {
+    throw new Error(`Unknown Wispy Smoke parameter '${parameterId}'.`);
+  }
+  return {
+    ...defaultNodeRegistry.instantiate(`parameter.${parameter.type}`, id, position, {
+      value: parameter.defaultValue,
+    }),
+    label: parameter.label,
+  };
 }
 
 function edge(
@@ -43,20 +56,20 @@ export function createWispySmokeGraph(): GraphDocument {
     node("render.volume", "volume_render", [520, 160]),
     node("transform.object", "transform", [70, -250]),
     node("quality.preset", "quality_preset", [70, -390]),
-    node("parameter.spawnRate", "param_spawnRate", positions.spawnRate),
-    node("parameter.lifetime", "param_lifetime", positions.lifetime),
-    node("parameter.radius", "param_radius", positions.radius),
-    node("parameter.density", "param_density", positions.density),
-    node("parameter.dissipation", "param_dissipation", positions.dissipation),
-    node("parameter.turbulence", "param_turbulence", positions.turbulence),
-    node("parameter.curlStrength", "param_curlStrength", positions.curlStrength),
-    node("parameter.riseSpeed", "param_riseSpeed", positions.riseSpeed),
-    node("parameter.wind", "param_wind", positions.wind),
-    node("parameter.color", "param_color", positions.color),
-    node("parameter.opacity", "param_opacity", positions.opacity),
-    node("parameter.softness", "param_softness", positions.softness),
-    node("parameter.quality", "param_quality", positions.quality),
-    node("parameter.worldPosition", "param_worldPosition", positions.worldPosition),
+    parameterNode("spawnRate", "param_spawnRate", positions.spawnRate),
+    parameterNode("lifetime", "param_lifetime", positions.lifetime),
+    parameterNode("radius", "param_radius", positions.radius),
+    parameterNode("density", "param_density", positions.density),
+    parameterNode("dissipation", "param_dissipation", positions.dissipation),
+    parameterNode("turbulence", "param_turbulence", positions.turbulence),
+    parameterNode("curlStrength", "param_curlStrength", positions.curlStrength),
+    parameterNode("riseSpeed", "param_riseSpeed", positions.riseSpeed),
+    parameterNode("wind", "param_wind", positions.wind),
+    parameterNode("color", "param_color", positions.color),
+    parameterNode("opacity", "param_opacity", positions.opacity),
+    parameterNode("softness", "param_softness", positions.softness),
+    parameterNode("quality", "param_quality", positions.quality),
+    parameterNode("worldPosition", "param_worldPosition", positions.worldPosition),
   ];
 
   const edges: GraphEdge[] = [
@@ -82,7 +95,7 @@ export function createWispySmokeGraph(): GraphDocument {
     edge("softness_to_render", "param_softness", "value", "volume_render", "softness"),
     edge("render_to_output", "volume_render", "render", "output", "effect"),
     edge("quality_to_preset", "param_quality", "value", "quality_preset", "quality"),
-    edge("position_to_transform", "param_worldPosition", "value", "transform", "position"),
+    edge("position_to_transform", "param_worldPosition", "value", "transform", "worldPosition"),
   ];
 
   return {

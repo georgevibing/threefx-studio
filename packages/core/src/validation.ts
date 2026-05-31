@@ -1,5 +1,5 @@
 import { canConnectPorts, formatPortType } from "./ports";
-import { defaultNodeRegistry, type NodeRegistry } from "./registry";
+import { defaultNodeRegistry, isEditableValuePort, type NodeRegistry } from "./registry";
 import {
   THREEFX_GRAPH_SCHEMA_VERSION,
   type Diagnostic,
@@ -157,6 +157,9 @@ function validateRequiredInputs(
         continue;
       }
       if (!incoming.has(`${node.id}:${port.id}`)) {
+        if (isEditableValuePort(port)) {
+          continue;
+        }
         diagnostics.push(
           diagnostic(
             "error",

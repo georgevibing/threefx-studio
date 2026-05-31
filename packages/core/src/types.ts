@@ -86,6 +86,15 @@ export interface PortDefinition {
   readonly acceptedTypes?: readonly PortType[];
   readonly required?: boolean;
   readonly multiple?: boolean;
+  readonly defaultValue?: ParameterValue;
+  readonly group?: string;
+  readonly description?: string;
+  readonly min?: number;
+  readonly max?: number;
+  readonly step?: number;
+  readonly unit?: string;
+  readonly options?: readonly string[];
+  readonly effectParameterId?: string;
 }
 
 export type NodeKind =
@@ -107,7 +116,6 @@ export interface NodeDefinition {
   readonly description: string;
   readonly ports: readonly PortDefinition[];
   readonly defaultParameters?: ParameterMap;
-  readonly parameterMetadata?: readonly ParameterMetadata[];
 }
 
 export interface GraphNode {

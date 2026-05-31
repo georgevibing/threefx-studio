@@ -1,6 +1,7 @@
 export * from "./clone";
 export * from "./compiler";
 export * from "./parameters";
+export * from "./parameterResolution";
 export * from "./ports";
 export * from "./preset";
 export * from "./registry";

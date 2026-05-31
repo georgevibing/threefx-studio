@@ -27,6 +27,7 @@ import {
   FileDown,
   FolderOpen,
   Keyboard,
+  Link2,
   Maximize2,
   Minimize2,
   Plus,
@@ -48,6 +49,11 @@ import {
   defaultNodeRegistry,
   deserializeGraphDocument,
   findNodePort,
+  getDefaultParameterNodeValue,
+  getParameterNodeOptions,
+  getParameterNodeValueType,
+  isEditableValuePort,
+  resolveWispySmokeParameterValues,
   serializeGraphDocument,
   toGraphEdgeId,
   validateGraphDocument,
@@ -58,6 +64,7 @@ import {
   type NodeDefinition,
   type ParameterMetadata,
   type ParameterMap,
+  type ParameterType,
   type ParameterValue,
   type PortDefinition,
   type PortType,
@@ -70,12 +77,18 @@ import { getPortTypeTone } from "@threefx/ui";
 type FlowNodeData = {
   readonly definition: NodeDefinition;
   readonly connectedPorts: ReadonlySet<string>;
-  readonly parameterValues: ParameterMap;
-  readonly onParameterChange: (id: string, value: ParameterValue) => void;
+  readonly graphParameters: ParameterMap;
+  readonly inputBindings: readonly NodeInputBindingView[];
+  readonly node: GraphNode;
+  readonly onFocusNode: (nodeId: string) => void;
+  readonly onNodeLabelChange: (nodeId: string, label: string) => void;
+  readonly onNodeParameterChange: (nodeId: string, id: string, value: ParameterValue) => void;
 };
 
 type FlowNode = Node<FlowNodeData, "threefxNode">;
 type FlowEdge = Edge;
+
+const FLOW_NODE_TYPES = { threefxNode: ThreeFXNode };
 
 type PreviewPerformanceStats = WispySmokeVFXStats & {
   readonly fps: number;
@@ -114,6 +127,15 @@ type NodeMenuState = {
   readonly nodeId: string;
   readonly x: number;
   readonly y: number;
+};
+
+type NodeInputBindingView = {
+  readonly edge: GraphEdge | null;
+  readonly linked: boolean;
+  readonly port: PortDefinition;
+  readonly sourceLabel: string;
+  readonly sourceNode: GraphNode | null;
+  readonly sourcePort: PortDefinition | null;
 };
 
 type SelectionDragState = {
@@ -213,10 +235,35 @@ function connectedPorts(edges: readonly GraphEdge[]): Map<string, Set<string>> {
   return result;
 }
 
+function resolveNodeInputBindings(graph: GraphDocument, node: GraphNode): NodeInputBindingView[] {
+  const nodesById = new Map(graph.nodes.map((entry) => [entry.id, entry]));
+  const edgesByTarget = new Map(
+    graph.edges.map((edge) => [`${edge.target}:${edge.targetPort}`, edge] as const),
+  );
+  const definition = defaultNodeRegistry.get(node.type);
+  return (definition?.ports ?? [])
+    .filter((port) => port.direction === "input")
+    .map((port) => {
+      const edge = edgesByTarget.get(`${node.id}:${port.id}`) ?? null;
+      const sourceNode = edge ? nodesById.get(edge.source) ?? null : null;
+      const sourcePort = sourceNode && edge ? findNodePort(sourceNode, edge.sourcePort) : null;
+      return {
+        edge,
+        linked: Boolean(edge),
+        port,
+        sourceLabel: sourceNode?.label ?? edge?.source ?? "Unlinked",
+        sourceNode,
+        sourcePort,
+      };
+    });
+}
+
 function graphToFlowNodes(
   graph: GraphDocument,
   selectedNodeIds: ReadonlySet<string>,
-  onParameterChange: (id: string, value: ParameterValue) => void,
+  onNodeParameterChange: (nodeId: string, id: string, value: ParameterValue) => void,
+  onNodeLabelChange: (nodeId: string, label: string) => void,
+  onFocusNode: (nodeId: string) => void,
 ): FlowNode[] {
   const connected = connectedPorts(graph.edges);
   return graph.nodes.flatMap((node) => {
@@ -233,8 +280,12 @@ function graphToFlowNodes(
         data: {
           definition,
           connectedPorts: connected.get(node.id) ?? new Set<string>(),
-          parameterValues: graph.parameters,
-          onParameterChange,
+          graphParameters: graph.parameters,
+          inputBindings: resolveNodeInputBindings(graph, node),
+          node,
+          onFocusNode,
+          onNodeLabelChange,
+          onNodeParameterChange,
         },
       },
     ];
@@ -425,11 +476,14 @@ function estimateAutoLayoutNodeSize(
   if (!definition) {
     return { width: AUTO_LAYOUT_NODE_WIDTH, height: 120 };
   }
+  if (definition.kind === "parameter") {
+    return { width: AUTO_LAYOUT_NODE_WIDTH, height: 178 };
+  }
   const inputCount = definition.ports.filter((port) => port.direction === "input").length;
   const outputCount = definition.ports.filter((port) => port.direction === "output").length;
   const portRows = Math.max(inputCount, outputCount, 2);
   const portGridHeight = Math.max(48, portRows * 18 + Math.max(0, portRows - 1) * 6 + 16);
-  const parameters = definition.parameterMetadata ?? [];
+  const parameters = definition.ports.filter(isEditableValuePort);
   const groupCount = new Set(parameters.map((parameter) => parameter.group || "Parameters")).size;
   const parameterPanelHeight = parameters.length > 0 ? 37 + groupCount * 32 : 0;
   const valueSummaryHeight = parameters.length > 0 ? 32 : 0;
@@ -952,7 +1006,7 @@ function App() {
   const suppressNextPaneClickRef = useRef(false);
   const undoStackRef = useRef<EditorSnapshot[]>([]);
   const redoStackRef = useRef<EditorSnapshot[]>([]);
-  const { fitView, flowToScreenPosition, getNodes, screenToFlowPosition } = useReactFlow<
+  const { fitView, flowToScreenPosition, getNodes, screenToFlowPosition, setCenter } = useReactFlow<
     FlowNode,
     FlowEdge
   >();
@@ -1057,7 +1111,7 @@ function App() {
       const id = createUniqueNodeId(type, graph.nodes);
       commitGraphChange(
         (current) => {
-          const node = defaultNodeRegistry.instantiate(type, id, [position.x, position.y]);
+          let node = defaultNodeRegistry.instantiate(type, id, [position.x, position.y]);
           const nextEdges = [...current.edges];
 
           if (connectMode.kind === "fromOutput") {
@@ -1083,6 +1137,18 @@ function App() {
             const targetPort = targetNode ? findNodePort(targetNode, connectMode.portId) : null;
             const sourcePort = targetPort ? firstCompatibleOutput(definition, targetPort) : null;
             if (sourcePort) {
+              if (definition.kind === "parameter" && targetPort) {
+                node = {
+                  ...node,
+                  label: targetPort.label,
+                  parameters: {
+                    ...(node.parameters ?? {}),
+                    value:
+                      targetPort.defaultValue ??
+                      getDefaultParameterNodeValue(getParameterNodeValueType(type) ?? "float"),
+                  },
+                };
+              }
               nextEdges.push({
                 id: toGraphEdgeId({
                   source: id,
@@ -1179,24 +1245,19 @@ function App() {
     setNodeMenu(null);
   }, [commitGraphChange, graph.edges, graph.nodes, selectedNodeIds]);
 
-  const updateParameter = useCallback(
-    (id: string, value: ParameterValue) => {
+  const updateNodeParameter = useCallback(
+    (nodeId: string, id: string, value: ParameterValue) => {
       commitGraphChange((current) => ({
         ...current,
-        parameters: { ...current.parameters, [id]: value },
         nodes: current.nodes.map((node) => {
-          const definition = defaultNodeRegistry.get(node.type);
-          const ownsParameter =
-            definition?.parameterMetadata?.some((metadata) => metadata.id === id) ?? false;
-          if (!ownsParameter) {
+          if (node.id !== nodeId) {
             return node;
           }
-          const isParameterNode = node.type === `parameter.${id}`;
           return {
             ...node,
             parameters: {
               ...(node.parameters ?? {}),
-              ...(isParameterNode ? { value } : { [id]: value }),
+              [id]: value,
             },
           };
         }),
@@ -1205,11 +1266,62 @@ function App() {
     [commitGraphChange],
   );
 
+  const updateNodeLabel = useCallback(
+    (nodeId: string, label: string) => {
+      const nextLabel = label.trim();
+      if (!nextLabel) {
+        return;
+      }
+      commitGraphChange((current) => ({
+        ...current,
+        nodes: current.nodes.map((node) =>
+          node.id === nodeId ? { ...node, label: nextLabel } : node,
+        ),
+      }));
+    },
+    [commitGraphChange],
+  );
+
+  const focusGraphNode = useCallback(
+    (nodeId: string) => {
+      const graphNode = graph.nodes.find((node) => node.id === nodeId);
+      if (!graphNode) {
+        return;
+      }
+      setSelectedNodeIds(new Set([nodeId]));
+      setSelectedEdgeIds(new Set());
+      setQuickAdd(null);
+      setNodeMenu(null);
+      const flowNode = getNodes().find((node) => node.id === nodeId) as
+        | (FlowNode & {
+            readonly height?: number;
+            readonly measured?: { readonly width?: number; readonly height?: number };
+            readonly width?: number;
+          })
+        | undefined;
+      const estimated = estimateAutoLayoutNodeSize(graphNode, defaultNodeRegistry.get(graphNode.type));
+      const width = flowNode?.measured?.width ?? flowNode?.width ?? AUTO_LAYOUT_NODE_WIDTH;
+      const height = flowNode?.measured?.height ?? flowNode?.height ?? estimated.height;
+      void setCenter(graphNode.position[0] + width / 2, graphNode.position[1] + height / 2, {
+        zoom: 1.12,
+        duration: 180,
+      });
+    },
+    [getNodes, graph.nodes, setCenter],
+  );
+
   const validation = useMemo(() => validateGraphDocument(graph), [graph]);
   const compileResult = useMemo(() => compileGraphToIR(graph), [graph]);
   const flowNodes = useMemo(
-    () => graphToFlowNodes(graph, selectedNodeIds, updateParameter),
-    [graph, selectedNodeIds, updateParameter],
+    () =>
+      graphToFlowNodes(
+        graph,
+        selectedNodeIds,
+        updateNodeParameter,
+        updateNodeLabel,
+        focusGraphNode,
+      ),
+    [focusGraphNode, graph, selectedNodeIds, updateNodeLabel, updateNodeParameter],
   );
   const flowEdges = useMemo(
     () => graphToFlowEdges(graph, selectedEdgeIds),
@@ -1765,7 +1877,7 @@ function App() {
     [canvasBounds, collectMeasuredNodeSizes, flowToScreenPosition, graph, quickAdd],
   );
 
-  const previewParams = graph.parameters as unknown as WispySmokeVFXParams;
+  const previewParams = resolveWispySmokeParameterValues(graph) as unknown as WispySmokeVFXParams;
 
   return (
     <main className="app-shell" tabIndex={-1}>
@@ -1818,7 +1930,7 @@ function App() {
             className="threefx-flow"
             nodes={flowNodes}
             edges={flowEdges}
-            nodeTypes={{ threefxNode: ThreeFXNode }}
+            nodeTypes={FLOW_NODE_TYPES}
             fitView
             minZoom={0.24}
             maxZoom={1.8}
@@ -2186,17 +2298,187 @@ function formatNodeParameterValue(value: ParameterValue): string {
   return String(value ?? "");
 }
 
+function hasNodeParameterValue(node: GraphNode, id: string): boolean {
+  return Boolean(node.parameters) && Object.prototype.hasOwnProperty.call(node.parameters, id);
+}
+
+function parameterTypeForPortType(type: PortType): ParameterType | null {
+  switch (type) {
+    case "bool":
+    case "color":
+    case "curve":
+    case "float":
+    case "int":
+    case "quality":
+    case "string":
+    case "vec2":
+    case "vec3":
+      return type;
+    default:
+      return null;
+  }
+}
+
+function defaultValueForPort(port: PortDefinition): ParameterValue {
+  const parameterType = parameterTypeForPortType(port.type);
+  if (port.defaultValue !== undefined) {
+    return port.defaultValue;
+  }
+  return parameterType ? getDefaultParameterNodeValue(parameterType) : null;
+}
+
+function valueForInputPort(
+  node: GraphNode,
+  port: PortDefinition,
+  graphParameters: ParameterMap,
+): ParameterValue {
+  if (hasNodeParameterValue(node, port.id)) {
+    return node.parameters?.[port.id] ?? null;
+  }
+  if (
+    port.effectParameterId &&
+    Object.prototype.hasOwnProperty.call(graphParameters, port.effectParameterId)
+  ) {
+    return graphParameters[port.effectParameterId] ?? null;
+  }
+  return defaultValueForPort(port);
+}
+
+function metadataForInputPort(
+  port: PortDefinition,
+): ParameterMetadata | null {
+  const type = parameterTypeForPortType(port.type);
+  if (!type) {
+    return null;
+  }
+  return {
+    id: port.id,
+    label: port.label,
+    type,
+    defaultValue: defaultValueForPort(port),
+    group: port.group || "Parameters",
+    ...(port.description ? { description: port.description } : {}),
+    ...(port.min !== undefined ? { min: port.min } : {}),
+    ...(port.max !== undefined ? { max: port.max } : {}),
+    ...(port.step !== undefined ? { step: port.step } : {}),
+    ...(port.unit ? { unit: port.unit } : {}),
+    ...(port.options ? { options: port.options } : {}),
+  };
+}
+
+function editableInputEntries(
+  node: GraphNode,
+  definition: NodeDefinition,
+  graphParameters: ParameterMap,
+  inputBindings: readonly NodeInputBindingView[],
+): Array<{
+  readonly binding: NodeInputBindingView | null;
+  readonly metadata: ParameterMetadata;
+  readonly port: PortDefinition;
+  readonly value: ParameterValue;
+}> {
+  const bindingsByPort = new Map(inputBindings.map((binding) => [binding.port.id, binding]));
+  return definition.ports
+    .filter(isEditableValuePort)
+    .map((port) => {
+      const metadata = metadataForInputPort(port);
+      return metadata
+        ? {
+            binding: bindingsByPort.get(port.id) ?? null,
+            metadata,
+            port,
+            value: valueForInputPort(node, port, graphParameters),
+          }
+        : null;
+    })
+    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
+}
+
+function TypePill({ type }: { readonly type: PortType | ParameterType }) {
+  const tone = getPortTypeTone(type);
+  return (
+    <span
+      className="type-pill"
+      data-port-type={type}
+      style={{
+        "--port-color": tone.accent,
+        "--port-fill": tone.background,
+        "--port-border-color": tone.border,
+      } as React.CSSProperties}
+    >
+      {String(type).toUpperCase()}
+    </span>
+  );
+}
+
+function EditableNodeLabel({
+  node,
+  onNodeLabelChange,
+}: {
+  readonly node: GraphNode;
+  readonly onNodeLabelChange: (nodeId: string, label: string) => void;
+}) {
+  const [draft, setDraft] = useState(node.label);
+  useEffect(() => {
+    setDraft(node.label);
+  }, [node.id, node.label]);
+
+  const commit = useCallback(() => {
+    const next = draft.trim();
+    if (next && next !== node.label) {
+      onNodeLabelChange(node.id, next);
+    } else {
+      setDraft(node.label);
+    }
+  }, [draft, node.id, node.label, onNodeLabelChange]);
+
+  return (
+    <input
+      className="graph-node-label-input nodrag nopan"
+      aria-label="Parameter label"
+      value={draft}
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={commit}
+      onKeyDown={(event) => {
+        event.stopPropagation();
+        if (event.key === "Enter") {
+          event.currentTarget.blur();
+        }
+        if (event.key === "Escape") {
+          setDraft(node.label);
+          event.currentTarget.blur();
+        }
+      }}
+    />
+  );
+}
+
 function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
-  const { definition, connectedPorts, parameterValues, onParameterChange } = data;
+  const {
+    definition,
+    connectedPorts,
+    graphParameters,
+    inputBindings,
+    node,
+    onFocusNode,
+    onNodeLabelChange,
+    onNodeParameterChange,
+  } = data;
   const inputs = definition.ports.filter((port) => port.direction === "input");
   const outputs = definition.ports.filter((port) => port.direction === "output");
-  const parameterMetadata = definition.parameterMetadata ?? [];
-  const parameterSummary = parameterMetadata
-    .map(
-      (metadata) =>
-        `${metadata.label}: ${formatNodeParameterValue(parameterValues[metadata.id] ?? metadata.defaultValue)}`,
-    )
+  const isParameterNode = definition.kind === "parameter";
+  const entries = editableInputEntries(node, definition, graphParameters, inputBindings);
+  const parameterSummary = entries
+    .map((entry) => {
+      const linkedSource = entry.binding?.sourceNode?.label;
+      return linkedSource
+        ? `${entry.metadata.label}: ${linkedSource}`
+        : `${entry.metadata.label}: ${formatNodeParameterValue(entry.value)}`;
+    })
     .join(" / ");
+  const parameterType = getParameterNodeValueType(node.type);
 
   return (
     <article className={`graph-node ${selected ? "graph-node-selected" : ""}`}>
@@ -2219,8 +2501,15 @@ function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
         />
       ))}
       <div className="graph-node-header">
-        <span>{definition.label}</span>
-        <small>{definition.category}</small>
+        {isParameterNode ? (
+          <EditableNodeLabel node={node} onNodeLabelChange={onNodeLabelChange} />
+        ) : (
+          <span>{node.label}</span>
+        )}
+        <div className="graph-node-header-meta">
+          {parameterType ? <TypePill type={parameterType} /> : null}
+          {!isParameterNode ? <small>{definition.category}</small> : null}
+        </div>
       </div>
       <div className="port-grid">
         <div className="port-column">
@@ -2234,12 +2523,21 @@ function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
           ))}
         </div>
       </div>
-      <NodeParameterPanel
-        definition={definition}
-        values={parameterValues}
-        onParameterChange={onParameterChange}
-      />
-      {parameterSummary ? (
+      {isParameterNode && parameterType ? (
+        <ParameterNodeValuePanel
+          node={node}
+          type={parameterType}
+          onNodeParameterChange={onNodeParameterChange}
+        />
+      ) : (
+        <NodeParameterPanel
+          entries={entries}
+          node={node}
+          onFocusNode={onFocusNode}
+          onNodeParameterChange={onNodeParameterChange}
+        />
+      )}
+      {!isParameterNode && parameterSummary ? (
         <div className="node-value" title={parameterSummary}>
           {parameterSummary}
         </div>
@@ -2248,47 +2546,90 @@ function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
   );
 }
 
-function groupParameterMetadata(
-  parameters: readonly ParameterMetadata[],
-): Array<{ group: string; parameters: readonly ParameterMetadata[] }> {
-  const grouped = new Map<string, ParameterMetadata[]>();
-  for (const parameter of parameters) {
-    const group = parameter.group || "Parameters";
-    grouped.set(group, [...(grouped.get(group) ?? []), parameter]);
+type NodeParameterEntry = ReturnType<typeof editableInputEntries>[number];
+
+function groupParameterEntries(
+  entries: readonly NodeParameterEntry[],
+): Array<{ group: string; entries: readonly NodeParameterEntry[] }> {
+  const grouped = new Map<string, NodeParameterEntry[]>();
+  for (const entry of entries) {
+    const group = entry.metadata.group || "Parameters";
+    grouped.set(group, [...(grouped.get(group) ?? []), entry]);
   }
-  return [...grouped.entries()].map(([group, groupParameters]) => ({
+  return [...grouped.entries()].map(([group, groupEntries]) => ({
     group,
-    parameters: groupParameters,
+    entries: groupEntries,
   }));
 }
 
 function defaultParameterGroupExpansion(
-  groups: readonly { group: string; parameters: readonly ParameterMetadata[] }[],
+  groups: readonly { group: string; entries: readonly NodeParameterEntry[] }[],
 ): Record<string, boolean> {
   return Object.fromEntries(groups.map((group) => [group.group, false]));
 }
 
 function parameterGroupSignature(
-  groups: readonly { group: string; parameters: readonly ParameterMetadata[] }[],
+  groups: readonly { group: string; entries: readonly NodeParameterEntry[] }[],
 ): string {
   return groups
-    .map((group) => `${group.group}:${group.parameters.map((parameter) => parameter.id).join(",")}`)
+    .map((group) => `${group.group}:${group.entries.map((entry) => entry.metadata.id).join(",")}`)
     .join("|");
 }
 
-function NodeParameterPanel({
-  definition,
-  values,
-  onParameterChange,
+function ParameterNodeValuePanel({
+  node,
+  type,
+  onNodeParameterChange,
 }: {
-  readonly definition: NodeDefinition;
-  readonly values: ParameterMap;
-  readonly onParameterChange: (id: string, value: ParameterValue) => void;
+  readonly node: GraphNode;
+  readonly type: ParameterType;
+  readonly onNodeParameterChange: (nodeId: string, id: string, value: ParameterValue) => void;
 }) {
-  const parameterGroups = useMemo(
-    () => groupParameterMetadata(definition.parameterMetadata ?? []),
-    [definition.parameterMetadata],
+  const options = getParameterNodeOptions(type);
+  const metadata: ParameterMetadata = {
+    id: "value",
+    label: "Value",
+    type,
+    defaultValue: getDefaultParameterNodeValue(type),
+    group: "Parameters",
+    ...(options ? { options } : {}),
+  };
+  return (
+    <div
+      className="node-parameter-panel nodrag nopan"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+      onDoubleClick={(event) => event.stopPropagation()}
+    >
+      <div className="node-parameter-field-list">
+        <div className="node-parameter-field-row">
+          <div className="node-parameter-field-title">
+            <span>{metadata.label}</span>
+          </div>
+          <ParameterField
+            hideLabel
+            metadata={metadata}
+            value={node.parameters?.value ?? metadata.defaultValue}
+            onChange={(value) => onNodeParameterChange(node.id, "value", value)}
+          />
+        </div>
+      </div>
+    </div>
   );
+}
+
+function NodeParameterPanel({
+  entries,
+  node,
+  onFocusNode,
+  onNodeParameterChange,
+}: {
+  readonly entries: readonly NodeParameterEntry[];
+  readonly node: GraphNode;
+  readonly onFocusNode: (nodeId: string) => void;
+  readonly onNodeParameterChange: (nodeId: string, id: string, value: ParameterValue) => void;
+}) {
+  const parameterGroups = useMemo(() => groupParameterEntries(entries), [entries]);
   const signature = useMemo(() => parameterGroupSignature(parameterGroups), [parameterGroups]);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() =>
     defaultParameterGroupExpansion(parameterGroups),
@@ -2296,7 +2637,7 @@ function NodeParameterPanel({
 
   useEffect(() => {
     setExpandedGroups(defaultParameterGroupExpansion(parameterGroups));
-  }, [definition.type, parameterGroups, signature]);
+  }, [node.id, signature]);
 
   const toggleGroup = useCallback((group: string) => {
     setExpandedGroups((current) => ({
@@ -2315,10 +2656,7 @@ function NodeParameterPanel({
     return null;
   }
 
-  const parameterCount = parameterGroups.reduce(
-    (count, group) => count + group.parameters.length,
-    0,
-  );
+  const parameterCount = parameterGroups.reduce((count, group) => count + group.entries.length, 0);
   const expandedCount = parameterGroups.filter((group) => expandedGroups[group.group]).length;
   const canExpandAll = expandedCount < parameterGroups.length;
   const canCollapseAll = expandedCount > 0;
@@ -2337,7 +2675,7 @@ function NodeParameterPanel({
           <button
             type="button"
             title="Expand all parameter groups"
-            aria-label={`Expand all ${definition.label} parameter groups`}
+            aria-label={`Expand all ${node.label} parameter groups`}
             disabled={!canExpandAll}
             onClick={expandAll}
           >
@@ -2346,7 +2684,7 @@ function NodeParameterPanel({
           <button
             type="button"
             title="Collapse all parameter groups"
-            aria-label={`Collapse all ${definition.label} parameter groups`}
+            aria-label={`Collapse all ${node.label} parameter groups`}
             disabled={!canCollapseAll}
             onClick={collapseAll}
           >
@@ -2367,16 +2705,17 @@ function NodeParameterPanel({
               >
                 {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                 <span>{group.group}</span>
-                <small>{group.parameters.length}</small>
+                <small>{group.entries.length}</small>
               </button>
               {expanded ? (
                 <div className="node-parameter-group-body">
-                  {group.parameters.map((metadata) => (
-                    <ParameterField
-                      key={metadata.id}
-                      metadata={metadata}
-                      value={values[metadata.id] ?? metadata.defaultValue}
-                      onChange={(value) => onParameterChange(metadata.id, value)}
+                  {group.entries.map((entry) => (
+                    <NodeParameterField
+                      key={entry.metadata.id}
+                      entry={entry}
+                      node={node}
+                      onFocusNode={onFocusNode}
+                      onNodeParameterChange={onNodeParameterChange}
                     />
                   ))}
                 </div>
@@ -2385,6 +2724,52 @@ function NodeParameterPanel({
           );
         })}
       </div>
+    </div>
+  );
+}
+
+function NodeParameterField({
+  entry,
+  node,
+  onFocusNode,
+  onNodeParameterChange,
+}: {
+  readonly entry: NodeParameterEntry;
+  readonly node: GraphNode;
+  readonly onFocusNode: (nodeId: string) => void;
+  readonly onNodeParameterChange: (nodeId: string, id: string, value: ParameterValue) => void;
+}) {
+  const binding = entry.binding;
+  const sourceNode = binding?.sourceNode ?? null;
+  return (
+    <div
+      className="node-parameter-field-row"
+      data-linked-state={binding?.linked ? "linked" : "local"}
+    >
+      <div className="node-parameter-field-title">
+        <span>{entry.metadata.label}</span>
+        <TypePill type={entry.metadata.type} />
+      </div>
+      {binding?.linked ? (
+        <div className="linked-source-line">
+          <Link2 size={13} />
+          <span>Source</span>
+          {sourceNode ? (
+            <button type="button" onClick={() => onFocusNode(sourceNode.id)}>
+              {binding.sourceLabel}
+            </button>
+          ) : (
+            <strong>{binding.sourceLabel}</strong>
+          )}
+        </div>
+      ) : (
+        <ParameterField
+          hideLabel
+          metadata={entry.metadata}
+          value={entry.value}
+          onChange={(value) => onNodeParameterChange(node.id, entry.port.id, value)}
+        />
+      )}
     </div>
   );
 }
@@ -2410,7 +2795,7 @@ function PortKnob({
       data-port-connected={connected ? "true" : "false"}
       data-port-direction={port.direction}
       data-port-type={port.type}
-      style={{ ...portToneStyle(port.type), top: 50 + index * 24 }}
+      style={{ ...portToneStyle(port.type), top: 58 + index * 24 }}
       title={describePort(port)}
     />
   );
@@ -2708,18 +3093,21 @@ function GraphStatusPanel({
 }
 
 function ParameterField({
+  hideLabel = false,
   metadata,
   value,
   onChange,
 }: {
+  readonly hideLabel?: boolean;
   readonly metadata: ParameterMetadata;
   readonly value: ParameterValue;
   readonly onChange: (value: ParameterValue) => void;
 }) {
+  const label = hideLabel ? null : <ParameterFieldLabel metadata={metadata} />;
   if (metadata.type === "bool") {
     return (
       <label className="param-field param-field-row">
-        <ParameterFieldLabel metadata={metadata} />
+        {label}
         <input
           type="checkbox"
           checked={Boolean(value)}
@@ -2732,7 +3120,7 @@ function ParameterField({
   if (metadata.type === "color") {
     return (
       <label className="param-field">
-        <ParameterFieldLabel metadata={metadata} />
+        {label}
         <input
           type="color"
           value={String(value)}
@@ -2745,7 +3133,7 @@ function ParameterField({
   if (metadata.options && (metadata.type === "quality" || metadata.type === "string")) {
     return (
       <label className="param-field">
-        <ParameterFieldLabel metadata={metadata} />
+        {label}
         <select value={String(value)} onChange={(event) => onChange(event.target.value)}>
           {(metadata.options ?? []).map((option) => (
             <option key={option} value={option}>
@@ -2753,6 +3141,19 @@ function ParameterField({
             </option>
           ))}
         </select>
+      </label>
+    );
+  }
+
+  if (metadata.type === "string") {
+    return (
+      <label className="param-field">
+        {label}
+        <input
+          type="text"
+          value={String(value ?? "")}
+          onChange={(event) => onChange(event.target.value)}
+        />
       </label>
     );
   }
@@ -2766,7 +3167,7 @@ function ParameterField({
       : [];
     return (
       <label className="param-field">
-        <ParameterFieldLabel metadata={metadata} />
+        {label}
         <div className="curve-field">
           {keyframes.map((keyframe, index) => (
             <span key={`${keyframe.time}-${index}`}>
@@ -2807,7 +3208,7 @@ function ParameterField({
     const tuple = Array.isArray(value) ? value : [0, 0, 0];
     return (
       <label className="param-field">
-        <ParameterFieldLabel metadata={metadata} />
+        {label}
         <div className="vec-field">
           {[0, 1, 2].map((index) => (
             <input
@@ -2827,9 +3228,33 @@ function ParameterField({
     );
   }
 
+  if (metadata.type === "vec2") {
+    const tuple = Array.isArray(value) ? value : [0, 0];
+    return (
+      <label className="param-field">
+        {label}
+        <div className="vec-field vec-field-2">
+          {[0, 1].map((index) => (
+            <input
+              key={index}
+              type="number"
+              step={metadata.step ?? 0.1}
+              value={Number(tuple[index] ?? 0)}
+              onChange={(event) => {
+                const next = [...tuple] as [number, number];
+                next[index] = Number(event.target.value);
+                onChange(next);
+              }}
+            />
+          ))}
+        </div>
+      </label>
+    );
+  }
+
   return (
     <label className="param-field">
-      <ParameterFieldLabel metadata={metadata} />
+      {label}
       <input
         type="number"
         min={metadata.min}

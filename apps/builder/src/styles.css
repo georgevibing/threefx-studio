@@ -428,6 +428,53 @@ button {
   text-transform: uppercase;
 }
 
+.graph-node-header-meta {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.graph-node-label-input {
+  min-width: 0;
+  flex: 1 1 auto;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  padding: 0;
+  font-size: 13px;
+  font-weight: 700;
+  outline: none;
+}
+
+.graph-node-label-input:focus {
+  color: var(--foreground);
+}
+
+.graph-node .type-pill {
+  --port-color: var(--muted-foreground);
+  --port-fill: var(--card);
+  --port-border-color: var(--border);
+  display: inline-flex;
+  height: 16px;
+  flex: 0 0 auto;
+  align-items: center;
+  border: 1px solid var(--port-border-color);
+  border-radius: 4px;
+  background: var(--port-fill);
+  color: var(--port-color);
+  padding: 2px 5px 1px;
+  font-family:
+    ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New",
+    monospace;
+  font-size: 8px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 10px;
+  opacity: 0.82;
+  text-transform: uppercase;
+}
+
 .port-grid {
   display: grid;
   grid-template-columns: 1fr 1fr;
@@ -583,6 +630,86 @@ button {
 
 .node-parameter-groups {
   border-top: 1px solid var(--border);
+}
+
+.node-parameter-field-list {
+  display: grid;
+  gap: 8px;
+  padding: 8px;
+}
+
+.node-parameter-field-row {
+  display: grid;
+  gap: 6px;
+}
+
+.node-parameter-field-title {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.node-parameter-field-title span {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--foreground);
+  font-size: 11px;
+  font-weight: 700;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linked-source-line {
+  display: flex;
+  min-width: 0;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  padding: 6px 7px;
+  color: var(--muted-foreground);
+  font-size: 11px;
+}
+
+.linked-source-line svg {
+  flex: 0 0 auto;
+  color: var(--selection-blue);
+}
+
+.linked-source-line span {
+  flex: 0 0 auto;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.linked-source-line button,
+.linked-source-line strong {
+  min-width: 0;
+  overflow: hidden;
+  border: 0;
+  background: transparent;
+  color: var(--foreground);
+  padding: 0;
+  font-size: 11px;
+  font-weight: 700;
+  text-align: left;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.linked-source-line button {
+  cursor: pointer;
+  text-decoration: underline;
+  text-decoration-color: rgba(96, 165, 250, 0.72);
+  text-underline-offset: 2px;
+}
+
+.linked-source-line button:hover {
+  color: var(--selection-blue);
 }
 
 .node-parameter-group + .node-parameter-group {
@@ -860,6 +987,10 @@ button {
   display: grid;
   grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 5px;
+}
+
+.vec-field-2 {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
 }
 
 .curve-field {

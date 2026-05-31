@@ -25,15 +25,23 @@ Main pipeline:
 
 ## Editor Architecture
 
-The builder uses React Flow for canvas interactions. React Flow nodes and edges are projections of `GraphDocument`. Node positions are persisted back to the graph document, but React Flow handles are not part of core. The inspector edits parameter metadata and graph parameter values. Preview receives typed `WispySmokeVFXParams`.
+The builder uses React Flow for canvas interactions. React Flow nodes and edges are projections of `GraphDocument`. Node positions are persisted back to the graph document, but React Flow handles are not part of core. The editor writes node-local inline values, primitive parameter node labels, and primitive parameter node `value` fields back to the graph. Preview receives resolved typed `WispySmokeVFXParams`.
 
 ## Graph Schema
 
-`GraphDocument` is versioned with `schemaVersion`. It contains nodes, edges, effect parameters, and viewport state. Nodes reference catalog `type` strings. Edges reference source/target node ids and source/target port ids.
+`GraphDocument` contains nodes, edges, effect parameters, and viewport state. Nodes reference catalog `type` strings. Edges reference source/target node ids and source/target port ids. Editable values are authored on unlinked `node.parameters[portId]` fields or linked primitive parameter nodes. `graph.parameters` remains a default fallback for graph-level Wispy Smoke values.
 
 ## Node Registry
 
-The registry maps node type ids to `NodeDefinition`. Definitions include label, category, description, ports, default parameters, and parameter metadata. New nodes are added by extending the registry and tests.
+The registry maps node type ids to `NodeDefinition`. Definitions include label, category, description, ports, and default parameters. Editable value metadata lives on input `PortDefinition` entries, so the owning node declares which primitive inputs it accepts. Generic primitive parameter nodes are registered as `parameter.float`, `parameter.int`, `parameter.bool`, `parameter.string`, `parameter.color`, `parameter.vec2`, `parameter.vec3`, `parameter.curve`, and `parameter.quality`.
+
+## Primitive Parameter Model
+
+Primitive data is not modeled as one node type per effect parameter. Plain values use the reusable primitive parameter node types listed above, and the node label carries the authoring name shown in the editor. For example, Spawn Rate, Softness, Curl Strength, and Density are all `parameter.float` nodes with different labels and `parameters.value` fields.
+
+Effect nodes own their editable inputs. A value input declares its type and UI metadata on the input `PortDefinition`: default value, group, description, min/max/step, unit, options, and optional `effectParameterId`. If the input is unlinked, the authoring value lives inline at `node.parameters[portId]`. If it is linked, the inline control is hidden and the upstream primitive parameter node supplies the value.
+
+Unique node or port types are reserved for domain objects and structured graph contracts such as `emitter`, `force`, `field`, `simulation`, `render`, and future non-primitive structs. Do not introduce bespoke node types for individual floats, strings, colors, booleans, vectors, curves, or quality presets.
 
 ## Port/Type System
 
@@ -41,11 +49,11 @@ Ports are directional and typed. The compatibility layer allows exact assignment
 
 ## Validation Pipeline
 
-Validation checks schema version, graph kind, supported effect type, duplicate ids, unknown node types, missing nodes/ports, direction errors, type mismatches, occupied single-input ports, missing required inputs, and cycles. Diagnostics are human-readable and include node/edge/path references.
+Validation checks schema version, graph kind, supported effect type, duplicate ids, unknown node types, missing nodes/ports, direction errors, type mismatches, occupied single-input ports, missing required structural inputs, and cycles. Editable value inputs are valid without edges when they have inline/default values. Diagnostics are human-readable and include node/edge/path references.
 
 ## Compiler Pipeline
 
-The compiler validates first. Valid graphs are topologically ordered, normalized, and hashed with stable JSON. The output is `EffectIR`, containing parameter metadata, parameter values, ordered nodes, deterministic connections, and a graph hash.
+The compiler validates first. Valid graphs are topologically ordered, normalized, and hashed with stable JSON. Wispy Smoke parameters are resolved deterministically in this order: built-in defaults, `graph.parameters` fallback, node-local inline values, then linked primitive parameter source values. The output is `EffectIR`, containing parameter metadata, resolved parameter values, ordered nodes, deterministic connections, and a graph hash.
 
 ## Effect IR
 
@@ -98,7 +106,7 @@ Core diagnostics are structured and user-readable. Builder UI displays errors be
 
 ## Serialization And Versioning
 
-Graph documents include `schemaVersion`. Breaking schema changes require migrations before validation. Effect IR has its own version so exporter changes do not force graph changes.
+Graph documents include `schemaVersion`, but pre-public breaking graph changes update the current schema in place rather than accumulating migrations. Effect IR has its own version so exporter changes do not force graph changes.
 
 ## Extension Points
 

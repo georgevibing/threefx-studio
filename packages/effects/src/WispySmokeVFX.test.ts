@@ -33,11 +33,11 @@ describe("WispySmokeVFX", () => {
     expect(params.backendMode).toBe("auto");
     expect(params.gridResolution).toBe("high");
     expect(params.baseDensity).toBeGreaterThan(0);
-    expect(params.color).toBe("#b9c9d2");
-    expect(params.emissionColor).toBe("#d7e7ef");
+    expect(params.color).toBe("#c5d7df");
+    expect(params.emissionColor).toBe("#eef8fc");
     expect(params.sourceGlowEnabled).toBe(false);
     expect(params.sourceGlowColor).toBe("#c7d2d8");
-    expect(params.pressureIterations).toBe(8);
+    expect(params.pressureIterations).toBe(20);
     expect(params.diffusionIterations).toBe(0);
     expect(params.advectionMode).toBe("maccormack");
     expect(params.debugView).toBe("final");
@@ -67,8 +67,8 @@ describe("WispySmokeVFX", () => {
     expect(stats.fallbackActive).toBe(false);
     expect(stats.gridResolution).toEqual([32, 32, 32]);
     expect(stats.gridCells).toBe(32 * 32 * 32);
-    expect(stats.pressureIterations).toBe(8);
-    expect(stats.solverPasses).toBe(19);
+    expect(stats.pressureIterations).toBe(20);
+    expect(stats.solverPasses).toBe(31);
     expect(stats.simulationMs).toBeGreaterThanOrEqual(0);
     expect(stats.renderSteps).toBeGreaterThanOrEqual(16);
     expect(stats.advectionMode).toBe("maccormack");

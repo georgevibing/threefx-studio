@@ -4052,8 +4052,8 @@ function PreviewViewport({
 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(PREVIEW_CAMERA_FOV, 1, 0.1, 80);
-      camera.position.set(0, 2.55, 6.2);
-      camera.lookAt(0, 2.45, 0);
+      camera.position.set(0, 2.45, 5.7);
+      camera.lookAt(0, 2.35, 0);
       const cameraDesiredState = createPreviewCameraState(camera);
       const cameraRenderedState = clonePreviewCameraState(cameraDesiredState);
       cameraRef.current = camera;

@@ -14,7 +14,9 @@ import {
   type Node,
   type NodeChange,
   type NodeProps,
+  type Viewport,
 } from "@xyflow/react";
+import { HexColorInput, HexColorPicker } from "react-colorful";
 import {
   ChevronDown,
   ChevronRight,
@@ -75,6 +77,7 @@ import { WispySmokeVFX, type WispySmokeVFXParams, type WispySmokeVFXStats } from
 import { createExportZip, exportEffectToTypeScript } from "@threefx/exporter";
 import { getWebGPUFeatureStatus } from "@threefx/runtime";
 import { getPortTypeTone } from "@threefx/ui";
+import { createLocalStorageEditorPersistence } from "./editorPersistence";
 
 type FlowNodeData = {
   readonly definition: NodeDefinition;
@@ -149,6 +152,7 @@ type SelectionDragState = {
 };
 
 const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph:v1";
+const editorPersistence = createLocalStorageEditorPersistence(LOCAL_STORAGE_KEY);
 const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
   activeDebugView: "final",
   advectionMode: "trilinear",
@@ -206,12 +210,48 @@ const AUTO_LAYOUT_KIND_ORDER: Record<string, number> = {
 };
 const PREVIEW_WEBGPU_PIXEL_RATIO_CAP = 0.66;
 const PREVIEW_WEBGL_PIXEL_RATIO_CAP = 2;
+const PREVIEW_UPDATE_DEBOUNCE_MS = 140;
+const AUTOSAVE_DEBOUNCE_MS = 400;
+const DEFAULT_FLOW_VIEWPORT: Viewport = { x: 120, y: 80, zoom: 0.82 };
 
 function loadInitialGraph(): GraphDocument {
-  // Pre-public graph changes should boot from the current preset so stale local
-  // experiments do not mask runtime/default changes. Manual load still imports
-  // saved graph data explicitly.
+  // Boot the current preset first; persisted editor state hydrates after mount
+  // through the persistence adapter so the storage backend can later be async.
   return createWispySmokeGraph();
+}
+
+function viewportForGraph(graph: GraphDocument): Viewport {
+  return graph.viewport ?? DEFAULT_FLOW_VIEWPORT;
+}
+
+function normalizeViewport(viewport: Viewport): Viewport {
+  return {
+    x: Number(viewport.x.toFixed(2)),
+    y: Number(viewport.y.toFixed(2)),
+    zoom: Number(viewport.zoom.toFixed(4)),
+  };
+}
+
+function viewportEquals(left: Viewport | undefined, right: Viewport): boolean {
+  if (!left) {
+    return false;
+  }
+  return (
+    Math.abs(left.x - right.x) < 0.01 &&
+    Math.abs(left.y - right.y) < 0.01 &&
+    Math.abs(left.zoom - right.zoom) < 0.0001
+  );
+}
+
+function useDebouncedValue<T>(value: T, delayMs: number): T {
+  const [debounced, setDebounced] = useState(value);
+
+  useEffect(() => {
+    const timeout = window.setTimeout(() => setDebounced(value), delayMs);
+    return () => window.clearTimeout(timeout);
+  }, [delayMs, value]);
+
+  return debounced;
 }
 
 function createUniqueNodeId(type: string, nodes: readonly GraphNode[]): string {
@@ -250,7 +290,7 @@ function resolveNodeInputBindings(graph: GraphDocument, node: GraphNode): NodeIn
     .filter((port) => port.direction === "input")
     .map((port) => {
       const edge = edgesByTarget.get(`${node.id}:${port.id}`) ?? null;
-      const sourceNode = edge ? nodesById.get(edge.source) ?? null : null;
+      const sourceNode = edge ? (nodesById.get(edge.source) ?? null) : null;
       const sourcePort = sourceNode && edge ? findNodePort(sourceNode, edge.sourcePort) : null;
       return {
         edge,
@@ -992,6 +1032,7 @@ function App() {
   const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null);
   const [isMiddlePanning, setIsMiddlePanning] = useState(false);
   const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
+  const [isPersistenceHydrated, setIsPersistenceHydrated] = useState(false);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [canvasBounds, setCanvasBounds] = useState<DOMRect | null>(null);
   const [selectionDrag, setSelectionDragState] = useState<SelectionDragState | null>(null);
@@ -1011,10 +1052,8 @@ function App() {
   const suppressNextPaneClickRef = useRef(false);
   const undoStackRef = useRef<EditorSnapshot[]>([]);
   const redoStackRef = useRef<EditorSnapshot[]>([]);
-  const { fitView, flowToScreenPosition, getNodes, screenToFlowPosition, setCenter } = useReactFlow<
-    FlowNode,
-    FlowEdge
-  >();
+  const { fitView, flowToScreenPosition, getNodes, screenToFlowPosition, setCenter, setViewport } =
+    useReactFlow<FlowNode, FlowEdge>();
   const canUndo = historyRevision >= 0 && undoStackRef.current.length > 0;
   const canRedo = historyRevision >= 0 && redoStackRef.current.length > 0;
 
@@ -1051,6 +1090,41 @@ function App() {
     setQuickAdd(null);
     setNodeMenu(null);
   }, []);
+
+  useEffect(() => {
+    let active = true;
+    void editorPersistence.load().then((result) => {
+      if (!active) {
+        return;
+      }
+      if (result.status === "loaded") {
+        setGraph(result.state.graph);
+        setSelectedNodeIds(new Set());
+        setSelectedEdgeIds(new Set());
+        setStatus(result.valid ? "Restored local workspace" : "Restored workspace with warnings");
+        void setViewport(viewportForGraph(result.state.graph));
+      } else if (result.status === "error") {
+        setStatus(`Local workspace ignored: ${result.message}`);
+      }
+      setIsPersistenceHydrated(true);
+    });
+    return () => {
+      active = false;
+    };
+  }, [setViewport]);
+
+  useEffect(() => {
+    if (!isPersistenceHydrated) {
+      return;
+    }
+    const timeout = window.setTimeout(() => {
+      void editorPersistence.save({ graph }).catch((error) => {
+        console.error(error);
+        setStatus("Autosave failed");
+      });
+    }, AUTOSAVE_DEBOUNCE_MS);
+    return () => window.clearTimeout(timeout);
+  }, [graph, isPersistenceHydrated]);
 
   const commitGraphChange = useCallback(
     (
@@ -1304,7 +1378,10 @@ function App() {
             readonly width?: number;
           })
         | undefined;
-      const estimated = estimateAutoLayoutNodeSize(graphNode, defaultNodeRegistry.get(graphNode.type));
+      const estimated = estimateAutoLayoutNodeSize(
+        graphNode,
+        defaultNodeRegistry.get(graphNode.type),
+      );
       const width = flowNode?.measured?.width ?? flowNode?.width ?? AUTO_LAYOUT_NODE_WIDTH;
       const height = flowNode?.measured?.height ?? flowNode?.height ?? estimated.height;
       void setCenter(graphNode.position[0] + width / 2, graphNode.position[1] + height / 2, {
@@ -1334,31 +1411,43 @@ function App() {
   );
 
   const saveLocal = useCallback(() => {
-    localStorage.setItem(LOCAL_STORAGE_KEY, serializeGraphDocument(graph));
-    setStatus("Saved graph locally");
+    void editorPersistence
+      .save({ graph })
+      .then(() => setStatus("Saved graph locally"))
+      .catch((error) => {
+        console.error(error);
+        setStatus("Save failed");
+      });
   }, [graph]);
 
   const loadLocal = useCallback(() => {
-    const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
-    if (!saved) {
-      setStatus("No local graph saved");
-      return;
-    }
-    const result = deserializeGraphDocument(saved);
-    commitGraphChange(() => result.graph, {
-      nextSelectedEdgeIds: [],
-      nextSelectedNodeIds: [],
-      status: result.valid ? "Loaded local graph" : "Loaded graph with validation errors",
+    void editorPersistence.load().then((result) => {
+      if (result.status === "missing") {
+        setStatus("No local graph saved");
+        return;
+      }
+      if (result.status === "error") {
+        setStatus(`Local graph load failed: ${result.message}`);
+        return;
+      }
+      commitGraphChange(() => result.state.graph, {
+        nextSelectedEdgeIds: [],
+        nextSelectedNodeIds: [],
+        status: result.valid ? "Loaded local graph" : "Loaded graph with validation errors",
+      });
+      void setViewport(viewportForGraph(result.state.graph));
     });
-  }, [commitGraphChange]);
+  }, [commitGraphChange, setViewport]);
 
   const resetPreset = useCallback(() => {
-    commitGraphChange(() => createWispySmokeGraph(), {
+    const preset = createWispySmokeGraph();
+    commitGraphChange(() => preset, {
       nextSelectedEdgeIds: [],
       nextSelectedNodeIds: [],
       status: "Loaded Wispy Smoke preset",
     });
-  }, [commitGraphChange]);
+    void setViewport(viewportForGraph(preset));
+  }, [commitGraphChange, setViewport]);
 
   const downloadJson = useCallback(() => {
     const blob = new Blob([serializeGraphDocument(graph)], { type: "application/json" });
@@ -1381,10 +1470,11 @@ function App() {
           nextSelectedNodeIds: [],
           status: result.valid ? "Imported graph" : "Imported graph with validation errors",
         });
+        void setViewport(viewportForGraph(result.graph));
       });
       reader.readAsText(file);
     },
-    [commitGraphChange],
+    [commitGraphChange, setViewport],
   );
 
   const collectMeasuredNodeSizes = useCallback((): Map<string, AutoLayoutNodeSize> => {
@@ -1791,6 +1881,21 @@ function App() {
     [suppressPaneClickEcho],
   );
 
+  const handleMoveEnd = useCallback(
+    (_event: MouseEvent | TouchEvent | null, viewport: Viewport) => {
+      const nextViewport = normalizeViewport(viewport);
+      setGraph((current) =>
+        viewportEquals(current.viewport, nextViewport)
+          ? current
+          : {
+              ...current,
+              viewport: nextViewport,
+            },
+      );
+    },
+    [],
+  );
+
   const handleNodesChange = useCallback(
     (changes: NodeChange<FlowNode>[]) => {
       const positionChanges = changes.filter(
@@ -1892,6 +1997,11 @@ function App() {
       createWispySmokeRuntimeConfig(previewParams as unknown as ParameterMap),
     [compileResult.ir, previewParams],
   );
+  const previewState = useMemo(
+    () => ({ params: previewParams, runtimeConfig: previewConfig }),
+    [previewConfig, previewParams],
+  );
+  const debouncedPreviewState = useDebouncedValue(previewState, PREVIEW_UPDATE_DEBOUNCE_MS);
 
   return (
     <main className="app-shell" tabIndex={-1}>
@@ -1945,7 +2055,7 @@ function App() {
             nodes={flowNodes}
             edges={flowEdges}
             nodeTypes={FLOW_NODE_TYPES}
-            fitView
+            defaultViewport={viewportForGraph(graph)}
             minZoom={0.24}
             maxZoom={1.8}
             isValidConnection={(connection) => isConnectionValid(graph, connection)}
@@ -1965,6 +2075,7 @@ function App() {
               setNodeMenu({ nodeId: node.id, x: event.clientX, y: event.clientY });
             }}
             onEdgeClick={handleEdgeClick}
+            onMoveEnd={handleMoveEnd}
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
             deleteKeyCode={null}
@@ -2011,8 +2122,8 @@ function App() {
         <aside className="right-rail">
           <PreviewViewport
             isApple={isApple}
-            params={previewParams}
-            runtimeConfig={previewConfig}
+            params={debouncedPreviewState.params}
+            runtimeConfig={debouncedPreviewState.runtimeConfig}
             onTelemetry={setPreviewTelemetry}
           />
           <PerformancePanel telemetry={previewTelemetry} />
@@ -2359,9 +2470,7 @@ function valueForInputPort(
   return defaultValueForPort(port);
 }
 
-function metadataForInputPort(
-  port: PortDefinition,
-): ParameterMetadata | null {
+function metadataForInputPort(port: PortDefinition): ParameterMetadata | null {
   const type = parameterTypeForPortType(port.type);
   if (!type) {
     return null;
@@ -2415,11 +2524,13 @@ function TypePill({ type }: { readonly type: PortType | ParameterType }) {
     <span
       className="type-pill"
       data-port-type={type}
-      style={{
-        "--port-color": tone.accent,
-        "--port-fill": tone.background,
-        "--port-border-color": tone.border,
-      } as React.CSSProperties}
+      style={
+        {
+          "--port-color": tone.accent,
+          "--port-fill": tone.background,
+          "--port-border-color": tone.border,
+        } as React.CSSProperties
+      }
     >
       {String(type).toUpperCase()}
     </span>
@@ -3020,7 +3131,9 @@ function PerformancePanel({ telemetry }: { readonly telemetry: PreviewTelemetry 
     telemetry.gridCells > 0
       ? `${telemetry.gridResolution.join("x")} (${telemetry.gridCells.toLocaleString()})`
       : "--";
-  const backendValue = telemetry.fallbackActive ? `${telemetry.backend} fallback` : telemetry.backend;
+  const backendValue = telemetry.fallbackActive
+    ? `${telemetry.backend} fallback`
+    : telemetry.backend;
   return (
     <section className="panel performance-panel">
       <div className="panel-heading">
@@ -3111,6 +3224,161 @@ function GraphStatusPanel({
   );
 }
 
+const COMPLETE_NUMBER_PATTERN = /^[+-]?(?:\d+\.?\d*|\.\d+)(?:e[+-]?\d+)?$/i;
+const HEX_COLOR_PATTERN = /^#[0-9a-f]{6}$/i;
+
+function numberDraftFromValue(value: number): string {
+  return Number.isFinite(value) ? String(value) : "";
+}
+
+function parseNumberDraft(draft: string): number | null {
+  const trimmed = draft.trim();
+  if (!COMPLETE_NUMBER_PATTERN.test(trimmed)) {
+    return null;
+  }
+  const value = Number(trimmed);
+  return Number.isFinite(value) ? value : null;
+}
+
+function normalizeColorString(value: ParameterValue): string {
+  const candidate = typeof value === "string" ? value : "";
+  return HEX_COLOR_PATTERN.test(candidate) ? candidate.toLowerCase() : "#000000";
+}
+
+function NumberDraftInput({
+  ariaLabel,
+  integer = false,
+  max,
+  min,
+  onValueChange,
+  step,
+  value,
+}: {
+  readonly ariaLabel?: string | undefined;
+  readonly integer?: boolean;
+  readonly max?: number | undefined;
+  readonly min?: number | undefined;
+  readonly onValueChange: (value: number) => void;
+  readonly step?: number | undefined;
+  readonly value: number;
+}) {
+  const externalDraft = numberDraftFromValue(value);
+  const [draft, setDraft] = useState(externalDraft);
+  const [editing, setEditing] = useState(false);
+
+  useEffect(() => {
+    if (!editing) {
+      setDraft(externalDraft);
+    }
+  }, [editing, externalDraft]);
+
+  const commitDraft = useCallback(
+    (nextDraft: string) => {
+      const parsed = parseNumberDraft(nextDraft);
+      if (parsed === null) {
+        return;
+      }
+      onValueChange(integer ? Math.round(parsed) : parsed);
+    },
+    [integer, onValueChange],
+  );
+
+  return (
+    <input
+      aria-label={ariaLabel}
+      type="number"
+      min={min}
+      max={max}
+      step={step}
+      value={draft}
+      onFocus={() => setEditing(true)}
+      onBlur={() => {
+        setEditing(false);
+        const parsed = parseNumberDraft(draft);
+        setDraft(
+          parsed === null
+            ? externalDraft
+            : numberDraftFromValue(integer ? Math.round(parsed) : parsed),
+        );
+      }}
+      onChange={(event) => {
+        const nextDraft = event.target.value;
+        setDraft(nextDraft);
+        commitDraft(nextDraft);
+      }}
+    />
+  );
+}
+
+function ColorParameterField({
+  label,
+  metadata,
+  onChange,
+  value,
+}: {
+  readonly label: React.ReactNode;
+  readonly metadata: ParameterMetadata;
+  readonly onChange: (value: ParameterValue) => void;
+  readonly value: ParameterValue;
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const [open, setOpen] = useState(false);
+  const color = normalizeColorString(value);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof window.Node && rootRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    return () => window.removeEventListener("pointerdown", handlePointerDown);
+  }, [open]);
+
+  const handleColorChange = useCallback(
+    (nextColor: string) => {
+      if (HEX_COLOR_PATTERN.test(nextColor)) {
+        onChange(nextColor.toLowerCase());
+      }
+    },
+    [onChange],
+  );
+
+  return (
+    <div ref={rootRef} className="param-field color-field">
+      {label}
+      <div className="color-field-control">
+        <button
+          type="button"
+          className="color-swatch-button"
+          aria-label={`Open ${metadata.label} color picker`}
+          aria-expanded={open}
+          onClick={() => setOpen((current) => !current)}
+        >
+          <span className="color-swatch-fill" style={{ background: color }} />
+        </button>
+        <HexColorInput
+          className="color-hex-input"
+          color={color}
+          onChange={handleColorChange}
+          prefixed
+          aria-label={`${metadata.label} hex color`}
+        />
+      </div>
+      {open ? (
+        <div className="color-picker-popover" onPointerDown={(event) => event.stopPropagation()}>
+          <HexColorPicker color={color} onChange={handleColorChange} />
+        </div>
+      ) : null}
+    </div>
+  );
+}
+
 function ParameterField({
   hideLabel = false,
   metadata,
@@ -3138,14 +3406,7 @@ function ParameterField({
 
   if (metadata.type === "color") {
     return (
-      <label className="param-field">
-        {label}
-        <input
-          type="color"
-          value={String(value)}
-          onChange={(event) => onChange(event.target.value)}
-        />
-      </label>
+      <ColorParameterField label={label} metadata={metadata} value={value} onChange={onChange} />
     );
   }
 
@@ -3189,30 +3450,30 @@ function ParameterField({
         {label}
         <div className="curve-field">
           {keyframes.map((keyframe, index) => (
-            <span key={`${keyframe.time}-${index}`}>
-              <input
-                type="number"
+            <span key={index}>
+              <NumberDraftInput
+                ariaLabel={`${metadata.label} key ${index + 1} time`}
                 min={0}
                 max={1}
                 step={0.01}
                 value={keyframe.time}
-                onChange={(event) => {
+                onValueChange={(nextValue) => {
                   const next = [...keyframes];
                   const current = next[index] ?? { time: 0, value: 0 };
-                  next[index] = { ...current, time: Number(event.target.value) };
+                  next[index] = { ...current, time: nextValue };
                   onChange(next);
                 }}
               />
-              <input
-                type="number"
+              <NumberDraftInput
+                ariaLabel={`${metadata.label} key ${index + 1} value`}
                 min={0}
                 max={1}
                 step={0.01}
                 value={keyframe.value}
-                onChange={(event) => {
+                onValueChange={(nextValue) => {
                   const next = [...keyframes];
                   const current = next[index] ?? { time: 0, value: 0 };
-                  next[index] = { ...current, value: Number(event.target.value) };
+                  next[index] = { ...current, value: nextValue };
                   onChange(next);
                 }}
               />
@@ -3230,14 +3491,14 @@ function ParameterField({
         {label}
         <div className="vec-field">
           {[0, 1, 2].map((index) => (
-            <input
+            <NumberDraftInput
               key={index}
-              type="number"
+              ariaLabel={`${metadata.label} component ${index + 1}`}
               step={metadata.step ?? 0.1}
               value={Number(tuple[index] ?? 0)}
-              onChange={(event) => {
+              onValueChange={(nextValue) => {
                 const next = [...tuple] as [number, number, number];
-                next[index] = Number(event.target.value);
+                next[index] = nextValue;
                 onChange(next);
               }}
             />
@@ -3254,14 +3515,14 @@ function ParameterField({
         {label}
         <div className="vec-field vec-field-2">
           {[0, 1].map((index) => (
-            <input
+            <NumberDraftInput
               key={index}
-              type="number"
+              ariaLabel={`${metadata.label} component ${index + 1}`}
               step={metadata.step ?? 0.1}
               value={Number(tuple[index] ?? 0)}
-              onChange={(event) => {
+              onValueChange={(nextValue) => {
                 const next = [...tuple] as [number, number];
-                next[index] = Number(event.target.value);
+                next[index] = nextValue;
                 onChange(next);
               }}
             />
@@ -3274,16 +3535,14 @@ function ParameterField({
   return (
     <label className="param-field">
       {label}
-      <input
-        type="number"
+      <NumberDraftInput
+        ariaLabel={metadata.label}
         min={metadata.min}
         max={metadata.max}
         step={metadata.step ?? 0.01}
         value={Number(value)}
-        onChange={(event) => {
-          const next = Number(event.target.value);
-          onChange(metadata.type === "int" ? Math.round(next) : next);
-        }}
+        integer={metadata.type === "int"}
+        onValueChange={(next) => onChange(next)}
       />
     </label>
   );
@@ -3954,8 +4213,7 @@ function PreviewViewport({
   useEffect(() => {
     paramsRef.current = params;
     runtimeConfigRef.current = runtimeConfig;
-    effectRef.current?.setParams(params);
-    effectRef.current?.setRuntimeConfig(runtimeConfig);
+    effectRef.current?.setParamsAndRuntimeConfig(params, runtimeConfig);
   }, [params, runtimeConfig]);
 
   const endPreviewNavigation = useCallback((event?: React.PointerEvent<HTMLCanvasElement>) => {

@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { createWispySmokeRuntimeConfig, type ParameterMap } from "@threefx/core";
 import { WispySmokeVFX } from "./WispySmokeVFX";
 import { normalizeWispySmokeParams } from "./wispySmokeDefaults";
 
@@ -8,6 +9,22 @@ const webgpuRenderer = {
     // Tests only verify deterministic dispatch setup; real GPU execution is covered in preview.
   },
 };
+
+type CompatMaterialView = {
+  readonly uniforms: {
+    readonly uColor: { readonly value: { readonly getHexString: () => string } };
+    readonly uEmissionColor: { readonly value: { readonly getHexString: () => string } };
+    readonly uOpacity: { readonly value: number };
+  };
+};
+
+function compatMaterial(smoke: WispySmokeVFX): CompatMaterialView {
+  const points = smoke.object3D.children.find((child) => "material" in child);
+  if (!points || !("material" in points)) {
+    throw new Error("Compatibility points material was not found.");
+  }
+  return points.material as CompatMaterialView;
+}
 
 describe("WispySmokeVFX", () => {
   it("normalizes eulerian fluid runtime parameters", () => {
@@ -61,9 +78,19 @@ describe("WispySmokeVFX", () => {
     expect(stats.forceCount).toBe(1);
     expect(stats.obstacleCount).toBe(0);
     expect(stats.activeDebugView).toBe("final");
-    const volume = smoke.object3D.children.find((child) => child.name === "WispySmokeVFXEulerianFluidVolume");
+    const volume = smoke.object3D.children.find(
+      (child) => child.name === "WispySmokeVFXEulerianFluidVolume",
+    );
     const volumeMesh = volume as
-      | { readonly material?: { readonly depthTest?: boolean; readonly depthWrite?: boolean; readonly outputNode?: unknown; readonly transparent?: boolean }; readonly renderOrder: number }
+      | {
+          readonly material?: {
+            readonly depthTest?: boolean;
+            readonly depthWrite?: boolean;
+            readonly outputNode?: unknown;
+            readonly transparent?: boolean;
+          };
+          readonly renderOrder: number;
+        }
       | undefined;
     expect(volumeMesh).toBeDefined();
     expect(volumeMesh?.renderOrder).toBe(10);
@@ -141,6 +168,24 @@ describe("WispySmokeVFX", () => {
     expect(smoke.getParams().sourceGlowColor).toBe("#ff8800");
     expect(smoke.getStats().fallbackActive).toBe(false);
     expect(smoke.getParams().detailScale).toBe(5.5);
+    smoke.dispose();
+  });
+
+  it("applies combined params and runtime config updates to preview uniforms", () => {
+    const smoke = new WispySmokeVFX({ backendMode: "compat" });
+    const runtimeConfig = createWispySmokeRuntimeConfig({
+      color: "#ff0000",
+      opacity: 0.35,
+      pressureIterations: 18,
+    } as ParameterMap);
+
+    smoke.setParamsAndRuntimeConfig({ emissionColor: "#00ff44" }, runtimeConfig);
+
+    const material = compatMaterial(smoke);
+    expect(material.uniforms.uColor.value.getHexString()).toBe("ff0000");
+    expect(material.uniforms.uEmissionColor.value.getHexString()).toBe("00ff44");
+    expect(material.uniforms.uOpacity.value).toBeCloseTo(0.35);
+    expect(smoke.getStats().pressureIterations).toBe(18);
     smoke.dispose();
   });
 

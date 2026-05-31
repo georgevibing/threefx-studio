@@ -25,7 +25,7 @@ Main pipeline:
 
 ## Editor Architecture
 
-The builder uses React Flow for canvas interactions. React Flow nodes and edges are projections of `GraphDocument`. Node positions are persisted back to the graph document, but React Flow handles are not part of core. The editor writes node-local inline values, primitive parameter node labels, and primitive parameter node `value` fields back to the graph. Preview receives resolved typed `WispySmokeVFXParams` plus the canonical compiled runtime config.
+The builder uses React Flow for canvas interactions. React Flow nodes and edges are projections of `GraphDocument`. Node positions and viewport state are persisted back to the graph document, but React Flow handles are not part of core. The editor writes node-local inline values, primitive parameter node labels, and primitive parameter node `value` fields back to the graph. Browser persistence is hidden behind an `EditorPersistence` adapter; the current implementation writes the serialized graph to local storage, but the app boundary can move to IndexedDB without changing core. Preview receives resolved typed `WispySmokeVFXParams` plus the canonical compiled runtime config through a short debounce so high-frequency inspector edits do not recreate heavy preview resources per keystroke.
 
 ## Graph Schema
 

@@ -27,6 +27,8 @@ import {
   FileDown,
   FolderOpen,
   Keyboard,
+  Maximize2,
+  Minimize2,
   Plus,
   Redo2,
   RotateCcw,
@@ -122,12 +124,19 @@ type SelectionDragState = {
   readonly start: { readonly x: number; readonly y: number };
 };
 
-const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph";
+const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph:v2";
 const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
-  activeParticles: 0,
+  backend: "compat",
+  fallbackActive: true,
   fps: 0,
   frameMs: 0,
-  maxParticles: 0,
+  gridCells: 0,
+  gridResolution: [0, 0, 0],
+  pressureIterations: 0,
+  renderSteps: 0,
+  requestedBackend: "auto",
+  simulationMs: 0,
+  solverPasses: 0,
 };
 const HISTORY_LIMIT = 100;
 const QUICK_ADD_WIDTH = 280;
@@ -160,6 +169,8 @@ const AUTO_LAYOUT_KIND_ORDER: Record<string, number> = {
   quality: 7,
   parameter: 8,
 };
+const PREVIEW_WEBGPU_PIXEL_RATIO_CAP = 0.66;
+const PREVIEW_WEBGL_PIXEL_RATIO_CAP = 2;
 
 function loadInitialGraph(): GraphDocument {
   const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -349,6 +360,10 @@ function shortcutModifierLabel(isApple: boolean): string {
 
 function shortcutLabel(isApple: boolean, ...parts: readonly string[]): string {
   return parts.map((part) => (part === "Mod" ? shortcutModifierLabel(isApple) : part)).join(" + ");
+}
+
+function alternateShortcutModifierLabel(isApple: boolean): string {
+  return isApple ? "Option" : "Alt";
 }
 
 function consumeShortcutEvent(
@@ -1382,6 +1397,11 @@ function App() {
     [openQuickAddAt],
   );
 
+  const clearSelection = useCallback(() => {
+    setSelectedNodeIds((current) => (current.size === 0 ? current : new Set<string>()));
+    setSelectedEdgeIds((current) => (current.size === 0 ? current : new Set<string>()));
+  }, []);
+
   const handleCanvasPointerDownCapture = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
       if (event.button === 1) {
@@ -1456,6 +1476,10 @@ function App() {
           window.setTimeout(() => {
             suppressNextPaneClickRef.current = false;
           }, 160);
+        } else {
+          clearSelection();
+          setQuickAdd(null);
+          setNodeMenu(null);
         }
         setSelectionDrag(null);
       }
@@ -1464,7 +1488,7 @@ function App() {
         event.currentTarget.releasePointerCapture(event.pointerId);
       }
     },
-    [setSelectionDrag],
+    [clearSelection, setSelectionDrag],
   );
 
   const focusSelection = useCallback(() => {
@@ -1538,6 +1562,7 @@ function App() {
       }
       if (event.key === "Escape") {
         consumeShortcutEvent(event);
+        clearSelection();
         setQuickAdd(null);
         setNodeMenu(null);
         setIsShortcutDialogOpen(false);
@@ -1550,6 +1575,7 @@ function App() {
       }
     },
     [
+      clearSelection,
       deleteSelection,
       duplicateSelected,
       focusSelection,
@@ -1586,11 +1612,10 @@ function App() {
       suppressNextPaneClickRef.current = false;
       return;
     }
-    setSelectedNodeIds(new Set());
-    setSelectedEdgeIds(new Set());
+    clearSelection();
     setQuickAdd(null);
     setNodeMenu(null);
-  }, []);
+  }, [clearSelection]);
 
   const handleNodeClick = useCallback(
     (event: React.MouseEvent, node: FlowNode) => {
@@ -1858,7 +1883,11 @@ function App() {
           ) : null}
         </div>
         <aside className="right-rail">
-          <PreviewViewport params={previewParams} onTelemetry={setPreviewTelemetry} />
+          <PreviewViewport
+            isApple={isApple}
+            params={previewParams}
+            onTelemetry={setPreviewTelemetry}
+          />
           <PerformancePanel telemetry={previewTelemetry} />
           <GraphStatusPanel
             compileResult={compileResult}
@@ -1967,7 +1996,8 @@ function ShortcutDialog({
   readonly open: boolean;
   readonly onClose: () => void;
 }) {
-  const shortcuts = [
+  const alternateModifier = alternateShortcutModifierLabel(isApple);
+  const keyboardShortcuts = [
     {
       action: "Undo",
       description: "Previous graph edit",
@@ -2017,6 +2047,31 @@ function ShortcutDialog({
       keys: ["Esc"],
     },
   ];
+  const previewShortcuts = [
+    {
+      action: "Preview orbit",
+      description: "Rotate around the effect",
+      keys: ["Middle Drag", `${alternateModifier} + Left Drag`],
+    },
+    {
+      action: "Preview pan",
+      description: "Move the preview target",
+      keys: [
+        "Shift + Middle Drag",
+        isApple ? "Option + Cmd + Left Drag" : "Alt + Ctrl + Left Drag",
+      ],
+    },
+    {
+      action: "Preview zoom",
+      description: "Move closer or farther within limits",
+      keys: ["Scroll Wheel", ...(isApple ? ["Option + Control + Left Drag"] : [])],
+    },
+    {
+      action: "Maximize preview",
+      description: "Expand the preview; Esc restores it",
+      keys: ["Maximize Button", "Esc"],
+    },
+  ];
 
   if (!open) {
     return null;
@@ -2046,7 +2101,30 @@ function ShortcutDialog({
           </button>
         </div>
         <div className="shortcut-list">
-          {shortcuts.map((shortcut) => (
+          {keyboardShortcuts.map((shortcut) => (
+            <div key={shortcut.action} className="shortcut-row">
+              <div>
+                <strong>{shortcut.action}</strong>
+                <span>{shortcut.description}</span>
+              </div>
+              <div className="shortcut-keys">
+                {shortcut.keys.map((combo, index) => (
+                  <span key={combo} className="shortcut-combo-group">
+                    {index > 0 ? <span className="shortcut-key-separator">/</span> : null}
+                    <span className="shortcut-combo">
+                      {combo.split(" + ").map((key) => (
+                        <kbd key={key}>{key}</kbd>
+                      ))}
+                    </span>
+                  </span>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="shortcut-divider" role="separator">
+            <span>Preview controls</span>
+          </div>
+          {previewShortcuts.map((shortcut) => (
             <div key={shortcut.action} className="shortcut-row">
               <div>
                 <strong>{shortcut.action}</strong>
@@ -2538,6 +2616,11 @@ function NodeContextMenu({
 }
 
 function PerformancePanel({ telemetry }: { readonly telemetry: PreviewTelemetry }) {
+  const gridValue =
+    telemetry.gridCells > 0
+      ? `${telemetry.gridResolution.join("x")} (${telemetry.gridCells.toLocaleString()})`
+      : "--";
+  const backendValue = telemetry.fallbackActive ? `${telemetry.backend} fallback` : telemetry.backend;
   return (
     <section className="panel performance-panel">
       <div className="panel-heading">
@@ -2549,9 +2632,19 @@ function PerformancePanel({ telemetry }: { readonly telemetry: PreviewTelemetry 
           label="Frame"
           value={telemetry.frameMs > 0 ? `${telemetry.frameMs.toFixed(1)} ms` : "--"}
         />
+        <Metric label="Grid" value={gridValue} />
+        <Metric label="Backend" value={backendValue} />
         <Metric
-          label="Particles"
-          value={`${telemetry.activeParticles}/${telemetry.maxParticles}`}
+          label="Steps"
+          value={telemetry.renderSteps > 0 ? String(telemetry.renderSteps) : "--"}
+        />
+        <Metric
+          label="Solver"
+          value={telemetry.solverPasses > 0 ? `${telemetry.solverPasses} passes` : "--"}
+        />
+        <Metric
+          label="Sim"
+          value={telemetry.simulationMs > 0 ? `${telemetry.simulationMs.toFixed(1)} ms` : "--"}
         />
         <Metric label="Renderer" value={telemetry.webgpuLabel} />
       </div>
@@ -2649,7 +2742,7 @@ function ParameterField({
     );
   }
 
-  if (metadata.type === "quality") {
+  if (metadata.options && (metadata.type === "quality" || metadata.type === "string")) {
     return (
       <label className="param-field">
         <ParameterFieldLabel metadata={metadata} />
@@ -2660,6 +2753,52 @@ function ParameterField({
             </option>
           ))}
         </select>
+      </label>
+    );
+  }
+
+  if (metadata.type === "curve") {
+    const keyframes = Array.isArray(value)
+      ? value.filter(
+          (entry): entry is { readonly time: number; readonly value: number } =>
+            Boolean(entry) && typeof entry === "object" && "time" in entry && "value" in entry,
+        )
+      : [];
+    return (
+      <label className="param-field">
+        <ParameterFieldLabel metadata={metadata} />
+        <div className="curve-field">
+          {keyframes.map((keyframe, index) => (
+            <span key={`${keyframe.time}-${index}`}>
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.01}
+                value={keyframe.time}
+                onChange={(event) => {
+                  const next = [...keyframes];
+                  const current = next[index] ?? { time: 0, value: 0 };
+                  next[index] = { ...current, time: Number(event.target.value) };
+                  onChange(next);
+                }}
+              />
+              <input
+                type="number"
+                min={0}
+                max={1}
+                step={0.01}
+                value={keyframe.value}
+                onChange={(event) => {
+                  const next = [...keyframes];
+                  const current = next[index] ?? { time: 0, value: 0 };
+                  next[index] = { ...current, value: Number(event.target.value) };
+                  onChange(next);
+                }}
+              />
+            </span>
+          ))}
+        </div>
       </label>
     );
   }
@@ -2716,16 +2855,502 @@ function ParameterFieldLabel({ metadata }: { readonly metadata: ParameterMetadat
   );
 }
 
+type PreviewRenderer = {
+  readonly isWebGPURenderer?: true;
+  dispose(): void;
+  init?(): Promise<unknown>;
+  render(scene: unknown, camera: unknown): void;
+  setClearColor(color: THREE.ColorRepresentation, alpha?: number): void;
+  setPixelRatio(value: number): void;
+  setSize(width: number, height: number, updateStyle?: boolean): void;
+};
+
+const PREVIEW_WEBGPU_INIT_TIMEOUT_MS = 6000;
+const CANVAS_FALLBACK_SMOKE_LAYERS = 28;
+
+async function waitForPreviewWebGPUInit(renderer: PreviewRenderer): Promise<boolean> {
+  const init = renderer.init?.();
+  if (!init) {
+    return true;
+  }
+
+  return await Promise.race([
+    init.then(
+      () => true,
+      () => false,
+    ),
+    new Promise<boolean>((resolve) => {
+      window.setTimeout(() => resolve(false), PREVIEW_WEBGPU_INIT_TIMEOUT_MS);
+    }),
+  ]);
+}
+
+async function createPreviewWebGPURenderer(
+  canvas: HTMLCanvasElement,
+): Promise<PreviewRenderer | null> {
+  let renderer: PreviewRenderer | null = null;
+  try {
+    const initialized = await Promise.race([
+      (async () => {
+        const webgpu = await import("three/webgpu");
+        renderer = new webgpu.WebGPURenderer({
+          canvas,
+          antialias: true,
+        }) as unknown as PreviewRenderer;
+        return await waitForPreviewWebGPUInit(renderer);
+      })(),
+      new Promise<boolean>((resolve) => {
+        window.setTimeout(() => resolve(false), PREVIEW_WEBGPU_INIT_TIMEOUT_MS);
+      }),
+    ]);
+    if (initialized && renderer) {
+      return renderer;
+    }
+  } catch {
+    // WebGPU exposure can be blocked by adapter/device selection. The editor still needs a preview.
+  }
+
+  const staleRenderer = renderer as PreviewRenderer | null;
+  staleRenderer?.dispose();
+  return null;
+}
+
+function createCanvasFallbackRenderer(canvas: HTMLCanvasElement): PreviewRenderer {
+  let clearColor = "#06080d";
+  let clearAlpha = 1;
+  let fallbackCanvas: HTMLCanvasElement | null = null;
+  const getDrawingContext = (): CanvasRenderingContext2D | null => {
+    let directContext: CanvasRenderingContext2D | null = null;
+    try {
+      directContext = canvas.getContext("2d");
+    } catch {
+      directContext = null;
+    }
+    if (directContext) {
+      return directContext;
+    }
+    if (!fallbackCanvas) {
+      fallbackCanvas = canvas.ownerDocument.createElement("canvas");
+      fallbackCanvas.setAttribute("aria-hidden", "true");
+      fallbackCanvas.style.position = "absolute";
+      fallbackCanvas.style.inset = "0";
+      fallbackCanvas.style.width = "100%";
+      fallbackCanvas.style.height = "100%";
+      fallbackCanvas.style.pointerEvents = "none";
+      fallbackCanvas.style.display = "block";
+      canvas.style.opacity = "0";
+      canvas.parentElement?.appendChild(fallbackCanvas);
+    }
+    fallbackCanvas.width = canvas.width;
+    fallbackCanvas.height = canvas.height;
+    return fallbackCanvas.getContext("2d");
+  };
+
+  return {
+    dispose() {
+      fallbackCanvas?.remove();
+      fallbackCanvas = null;
+      canvas.style.opacity = "";
+      // Canvas fallback has no GPU-owned resources.
+    },
+    render() {
+      const context = getDrawingContext();
+      if (!context) {
+        return;
+      }
+      drawCanvasFallbackSmoke(context, canvas.width, canvas.height, clearColor, clearAlpha);
+    },
+    setClearColor(color: THREE.ColorRepresentation, alpha = 1) {
+      clearColor = new THREE.Color(color).getStyle();
+      clearAlpha = alpha;
+    },
+    setPixelRatio() {
+      // The fallback writes directly to the canvas backing size set below.
+    },
+    setSize(width: number, height: number) {
+      canvas.width = Math.max(1, Math.floor(width));
+      canvas.height = Math.max(1, Math.floor(height));
+      if (fallbackCanvas) {
+        fallbackCanvas.width = canvas.width;
+        fallbackCanvas.height = canvas.height;
+      }
+    },
+  };
+}
+
+function drawCanvasFallbackSmoke(
+  context: CanvasRenderingContext2D,
+  width: number,
+  height: number,
+  clearColor: string,
+  clearAlpha: number,
+): void {
+  const time = performance.now() * 0.001;
+  const centerX = width * 0.5;
+  const baseY = height * 0.82;
+  const plumeHeight = height * 0.68;
+  context.save();
+  context.globalAlpha = clearAlpha;
+  context.fillStyle = clearColor;
+  context.fillRect(0, 0, width, height);
+  context.globalAlpha = 1;
+
+  const backdrop = context.createRadialGradient(
+    centerX,
+    height * 0.48,
+    width * 0.04,
+    centerX,
+    height * 0.46,
+    Math.max(width, height) * 0.72,
+  );
+  backdrop.addColorStop(0, "rgba(47, 58, 64, 0.3)");
+  backdrop.addColorStop(1, "rgba(6, 8, 13, 0)");
+  context.fillStyle = backdrop;
+  context.fillRect(0, 0, width, height);
+
+  context.globalCompositeOperation = "source-over";
+  context.filter = `blur(${Math.max(7, Math.min(16, width * 0.025))}px)`;
+  for (let layer = 0; layer < CANVAS_FALLBACK_SMOKE_LAYERS; layer += 1) {
+    const normalized = layer / Math.max(1, CANVAS_FALLBACK_SMOKE_LAYERS - 1);
+    const advected = (normalized + time * 0.052 + layer * 0.017) % 1;
+    const shoulder = Math.sin(Math.min(1, advected) * Math.PI);
+    const driftX =
+      Math.sin(advected * 6.4 + time * 0.46 + layer * 1.7) * width * (0.018 + advected * 0.07);
+    const driftY = Math.sin(time * (0.38 + layer * 0.011) + layer) * height * 0.018;
+    const x = centerX + driftX;
+    const y = baseY - advected * plumeHeight + driftY;
+    const radiusX = width * (0.08 + shoulder * 0.17 + advected * 0.06);
+    const radiusY = height * (0.052 + shoulder * 0.12 + advected * 0.045);
+    const alpha = (0.13 + shoulder * 0.08) * (1 - advected * 0.46);
+    const gradient = context.createRadialGradient(x, y, radiusX * 0.1, x, y, radiusX);
+    gradient.addColorStop(0, `rgba(188, 200, 204, ${alpha})`);
+    gradient.addColorStop(0.42, `rgba(135, 153, 160, ${alpha * 0.54})`);
+    gradient.addColorStop(1, "rgba(63, 75, 82, 0)");
+    context.fillStyle = gradient;
+    context.beginPath();
+    context.ellipse(x, y, radiusX, radiusY, Math.sin(time * 0.28 + layer) * 0.55, 0, Math.PI * 2);
+    context.fill();
+  }
+
+  context.filter = `blur(${Math.max(1.5, Math.min(4, width * 0.007))}px)`;
+  context.lineCap = "round";
+  context.lineJoin = "round";
+  for (let strand = 0; strand < 12; strand += 1) {
+    const offset = strand / 11;
+    const phase = time * (0.32 + offset * 0.2) + strand * 0.9;
+    const startY = baseY - plumeHeight * (0.18 + offset * 0.58);
+    const endY = startY - height * (0.12 + offset * 0.1);
+    const startX = centerX + Math.sin(phase) * width * (0.035 + offset * 0.08);
+    const endX = startX + Math.cos(phase * 0.82) * width * (0.08 + offset * 0.12);
+    context.globalAlpha = 0.12 * (1 - offset * 0.35);
+    context.strokeStyle = "rgba(174, 190, 198, 0.74)";
+    context.lineWidth = Math.max(1, width * (0.006 + offset * 0.004));
+    context.beginPath();
+    context.moveTo(startX, startY);
+    context.bezierCurveTo(
+      startX + Math.sin(phase + 1.2) * width * 0.12,
+      startY - height * 0.08,
+      endX - Math.cos(phase) * width * 0.08,
+      endY + height * 0.04,
+      endX,
+      endY,
+    );
+    context.stroke();
+  }
+
+  context.globalAlpha = 0.58;
+  context.filter = "blur(10px)";
+  const baseGradient = context.createRadialGradient(
+    centerX,
+    baseY,
+    width * 0.035,
+    centerX,
+    baseY,
+    width * 0.18,
+  );
+  baseGradient.addColorStop(0, "rgba(190, 199, 201, 0.24)");
+  baseGradient.addColorStop(0.58, "rgba(121, 134, 139, 0.17)");
+  baseGradient.addColorStop(1, "rgba(42, 48, 54, 0)");
+  context.fillStyle = baseGradient;
+  context.beginPath();
+  context.ellipse(centerX, baseY, width * 0.18, height * 0.12, 0, 0, Math.PI * 2);
+  context.fill();
+  context.restore();
+}
+
+function createPreviewWebGLRenderer(canvas: HTMLCanvasElement): PreviewRenderer | null {
+  let probeRenderer: THREE.WebGLRenderer | null = null;
+  try {
+    probeRenderer = new THREE.WebGLRenderer({
+      canvas: canvas.ownerDocument.createElement("canvas"),
+      antialias: true,
+    });
+  } catch {
+    return null;
+  } finally {
+    probeRenderer?.dispose();
+  }
+
+  try {
+    return new THREE.WebGLRenderer({
+      canvas,
+      antialias: true,
+    });
+  } catch {
+    return null;
+  }
+}
+
+async function createPreviewRenderer(
+  canvas: HTMLCanvasElement,
+  preferWebGPU: boolean,
+): Promise<{ readonly label: string; readonly renderer: PreviewRenderer }> {
+  if (preferWebGPU) {
+    const renderer = await createPreviewWebGPURenderer(canvas);
+    if (renderer) {
+      return { label: "WebGPU volume", renderer };
+    }
+  }
+
+  const webglRenderer = createPreviewWebGLRenderer(canvas);
+  if (webglRenderer) {
+    return {
+      label: "Compatible preview",
+      renderer: webglRenderer,
+    };
+  }
+
+  return {
+    label: "Canvas fallback",
+    renderer: createCanvasFallbackRenderer(canvas),
+  };
+}
+
+type PreviewCameraDragMode = "orbit" | "pan" | "zoom";
+
+type PreviewCameraDragState = {
+  readonly mode: PreviewCameraDragMode;
+  readonly pointerId: number;
+  previousX: number;
+  previousY: number;
+};
+
+type PreviewCameraState = {
+  readonly spherical: THREE.Spherical;
+  readonly target: THREE.Vector3;
+};
+
+const PREVIEW_CAMERA_FOV = 44;
+const PREVIEW_CAMERA_MIN_DISTANCE = 2;
+const PREVIEW_CAMERA_MAX_DISTANCE = 10.5;
+const PREVIEW_POINTER_ORBIT_SPEED = 0.012;
+const PREVIEW_POINTER_ZOOM_SPEED = 0.01;
+const PREVIEW_WHEEL_ZOOM_SPEED = 0.001;
+const PREVIEW_PITCH_EPSILON = 0.01;
+const PREVIEW_CAMERA_NAVIGATION_RATE = 18;
+
+function createPreviewCameraState(camera: THREE.PerspectiveCamera): PreviewCameraState {
+  const target = new THREE.Vector3(0, 1.8, 0);
+  const spherical = new THREE.Spherical().setFromVector3(
+    new THREE.Vector3().subVectors(camera.position, target),
+  );
+  spherical.radius = THREE.MathUtils.clamp(
+    spherical.radius,
+    PREVIEW_CAMERA_MIN_DISTANCE,
+    PREVIEW_CAMERA_MAX_DISTANCE,
+  );
+  spherical.phi = THREE.MathUtils.clamp(
+    spherical.phi,
+    PREVIEW_PITCH_EPSILON,
+    Math.PI - PREVIEW_PITCH_EPSILON,
+  );
+  return { spherical, target };
+}
+
+function syncPreviewCamera(camera: THREE.PerspectiveCamera, cameraState: PreviewCameraState): void {
+  const offset = new THREE.Vector3().setFromSpherical(cameraState.spherical);
+  camera.position.copy(cameraState.target).add(offset);
+  camera.lookAt(cameraState.target);
+  camera.updateMatrixWorld();
+}
+
+function clonePreviewCameraState(cameraState: PreviewCameraState): PreviewCameraState {
+  return {
+    spherical: new THREE.Spherical(
+      cameraState.spherical.radius,
+      cameraState.spherical.phi,
+      cameraState.spherical.theta,
+    ),
+    target: cameraState.target.clone(),
+  };
+}
+
+function copyPreviewCameraState(target: PreviewCameraState, source: PreviewCameraState): void {
+  target.spherical.radius = source.spherical.radius;
+  target.spherical.phi = source.spherical.phi;
+  target.spherical.theta = source.spherical.theta;
+  target.target.copy(source.target);
+}
+
+function lerpAngleRadians(current: number, target: number, alpha: number): number {
+  const delta = Math.atan2(Math.sin(target - current), Math.cos(target - current));
+  return current + delta * alpha;
+}
+
+function previewNavigationAlpha(deltaSeconds: number): number {
+  if (deltaSeconds <= 0) {
+    return 0;
+  }
+  return 1 - Math.exp(-PREVIEW_CAMERA_NAVIGATION_RATE * Math.min(deltaSeconds, 0.1));
+}
+
+function previewCameraPositionFromState(cameraState: PreviewCameraState): THREE.Vector3 {
+  return new THREE.Vector3().setFromSpherical(cameraState.spherical).add(cameraState.target);
+}
+
+function previewCameraBasis(cameraState: PreviewCameraState): {
+  readonly right: THREE.Vector3;
+  readonly up: THREE.Vector3;
+} {
+  const position = previewCameraPositionFromState(cameraState);
+  const forward = cameraState.target.clone().sub(position).normalize();
+  const right = new THREE.Vector3().crossVectors(forward, new THREE.Vector3(0, 1, 0)).normalize();
+  const up = new THREE.Vector3().crossVectors(right, forward).normalize();
+  return { right, up };
+}
+
+function updatePreviewCameraSmoothing(
+  camera: THREE.PerspectiveCamera,
+  renderedState: PreviewCameraState,
+  desiredState: PreviewCameraState,
+  deltaSeconds: number,
+): void {
+  const alpha = previewNavigationAlpha(deltaSeconds);
+  renderedState.target.lerp(desiredState.target, alpha);
+  renderedState.spherical.radius = THREE.MathUtils.lerp(
+    renderedState.spherical.radius,
+    desiredState.spherical.radius,
+    alpha,
+  );
+  renderedState.spherical.phi = THREE.MathUtils.lerp(
+    renderedState.spherical.phi,
+    desiredState.spherical.phi,
+    alpha,
+  );
+  renderedState.spherical.theta = lerpAngleRadians(
+    renderedState.spherical.theta,
+    desiredState.spherical.theta,
+    alpha,
+  );
+
+  const targetDelta = renderedState.target.distanceToSquared(desiredState.target);
+  const radiusDelta = Math.abs(renderedState.spherical.radius - desiredState.spherical.radius);
+  const phiDelta = Math.abs(renderedState.spherical.phi - desiredState.spherical.phi);
+  const thetaDelta = Math.abs(
+    Math.atan2(
+      Math.sin(desiredState.spherical.theta - renderedState.spherical.theta),
+      Math.cos(desiredState.spherical.theta - renderedState.spherical.theta),
+    ),
+  );
+  if (targetDelta < 1e-6 && radiusDelta < 1e-4 && phiDelta < 1e-4 && thetaDelta < 1e-4) {
+    copyPreviewCameraState(renderedState, desiredState);
+  }
+
+  syncPreviewCamera(camera, renderedState);
+}
+
+function getPreviewPointerNavigationMode(
+  event: Pick<
+    PointerEvent | React.PointerEvent,
+    "altKey" | "button" | "ctrlKey" | "metaKey" | "shiftKey"
+  >,
+  isApple: boolean,
+): PreviewCameraDragMode | null {
+  if (event.button === 1) {
+    return event.shiftKey ? "pan" : "orbit";
+  }
+  if (event.button !== 0 || !event.altKey) {
+    return null;
+  }
+  if (isApple && event.metaKey && !event.ctrlKey) {
+    return "pan";
+  }
+  if (isApple && event.ctrlKey && !event.metaKey) {
+    return "zoom";
+  }
+  if (!isApple && event.ctrlKey && !event.metaKey) {
+    return "pan";
+  }
+  if (event.ctrlKey || event.metaKey) {
+    return null;
+  }
+  return "orbit";
+}
+
+function orbitPreviewCamera(cameraState: PreviewCameraState, deltaX: number, deltaY: number): void {
+  cameraState.spherical.theta -= deltaX * PREVIEW_POINTER_ORBIT_SPEED;
+  cameraState.spherical.phi = THREE.MathUtils.clamp(
+    cameraState.spherical.phi - deltaY * PREVIEW_POINTER_ORBIT_SPEED,
+    PREVIEW_PITCH_EPSILON,
+    Math.PI - PREVIEW_PITCH_EPSILON,
+  );
+}
+
+function panPreviewCamera(
+  canvas: HTMLCanvasElement,
+  camera: THREE.PerspectiveCamera,
+  cameraState: PreviewCameraState,
+  deltaX: number,
+  deltaY: number,
+): void {
+  const viewportHeight = Math.max(canvas.clientHeight || canvas.getBoundingClientRect().height, 1);
+  const visibleHalfHeight =
+    (Math.tan(THREE.MathUtils.degToRad(camera.fov) * 0.5) * cameraState.spherical.radius) /
+    Math.max(camera.zoom, 0.001);
+  const unitsPerPixel = (2 * visibleHalfHeight) / viewportHeight;
+  const { right, up } = previewCameraBasis(cameraState);
+  cameraState.target.addScaledVector(right, -deltaX * unitsPerPixel);
+  cameraState.target.addScaledVector(up, deltaY * unitsPerPixel);
+}
+
+function zoomPreviewCamera(cameraState: PreviewCameraState, multiplier: number): void {
+  cameraState.spherical.radius = THREE.MathUtils.clamp(
+    cameraState.spherical.radius * multiplier,
+    PREVIEW_CAMERA_MIN_DISTANCE,
+    PREVIEW_CAMERA_MAX_DISTANCE,
+  );
+}
+
+function normalizedWheelDeltaY(
+  event: Pick<WheelEvent | React.WheelEvent, "deltaMode" | "deltaY">,
+): number {
+  if (event.deltaMode === 1) {
+    return event.deltaY * 16;
+  }
+  if (event.deltaMode === 2) {
+    return event.deltaY * 160;
+  }
+  return event.deltaY;
+}
+
 function PreviewViewport({
+  isApple = false,
   params,
   onTelemetry,
 }: {
+  readonly isApple: boolean;
   readonly params: WispySmokeVFXParams;
   readonly onTelemetry: (telemetry: PreviewTelemetry) => void;
 }) {
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
+  const cameraRef = useRef<THREE.PerspectiveCamera | null>(null);
+  const cameraDesiredStateRef = useRef<PreviewCameraState | null>(null);
+  const cameraRenderedStateRef = useRef<PreviewCameraState | null>(null);
+  const cameraDragRef = useRef<PreviewCameraDragState | null>(null);
   const effectRef = useRef<WispySmokeVFX | null>(null);
-  const rendererRef = useRef<THREE.WebGLRenderer | null>(null);
+  const rendererRef = useRef<PreviewRenderer | null>(null);
+  const [isMaximized, setIsMaximized] = useState(false);
+  const [isNavigating, setIsNavigating] = useState(false);
   const webgpu = useMemo(() => getWebGPUFeatureStatus(), []);
 
   useEffect(() => {
@@ -2733,78 +3358,142 @@ function PreviewViewport({
     if (!canvas) {
       return;
     }
-    const renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
-    renderer.setClearColor("#06080d", 1);
-    rendererRef.current = renderer;
-
-    const scene = new THREE.Scene();
-    scene.fog = new THREE.Fog("#06080d", 4, 11);
-    const camera = new THREE.PerspectiveCamera(44, 1, 0.1, 80);
-    camera.position.set(0, 2.1, 7.2);
-    camera.lookAt(0, 1.8, 0);
-
-    const grid = new THREE.GridHelper(5.5, 16, "#243244", "#151d2a");
-    grid.position.y = -0.02;
-    scene.add(grid);
-    const effect = new WispySmokeVFX({ ...params, renderer });
-    scene.add(effect.object3D);
-    effectRef.current = effect;
-    onTelemetry({
-      ...EMPTY_PREVIEW_STATS,
-      ...effect.getStats(),
-      webgpuLabel: webgpu.supported ? "WebGPU available" : "Compatible preview",
-      webgpuSupported: webgpu.supported,
-    });
-
+    let disposed = false;
     let frame = 0;
-    let last = performance.now();
-    let statsElapsed = 0;
-    let statsFrames = 0;
-    const resize = () => {
-      const rect = canvas.getBoundingClientRect();
-      const width = Math.max(1, Math.floor(rect.width));
-      const height = Math.max(1, Math.floor(rect.height));
-      renderer.setSize(width, height, false);
-      camera.aspect = width / height;
-      camera.updateProjectionMatrix();
-    };
-    const observer = new ResizeObserver(resize);
-    observer.observe(canvas);
-    resize();
+    let observer: ResizeObserver | null = null;
+    let started = false;
+    let startupFallback = 0;
 
-    const tick = (now: number) => {
-      const rawDelta = Math.max(0, (now - last) / 1000);
-      const delta = Math.min(0.05, rawDelta);
-      const sampleDelta = rawDelta > 0.5 ? 0 : rawDelta;
-      last = now;
-      effect.update(delta, now / 1000);
-      renderer.render(scene, camera);
-      if (sampleDelta > 0) {
-        statsElapsed += sampleDelta;
-        statsFrames += 1;
+    const startPreview = (label: string, renderer: PreviewRenderer): void => {
+      if (disposed || started) {
+        renderer.dispose();
+        return;
       }
-      if (statsElapsed >= 0.25) {
-        const averageFrameSeconds = statsElapsed / statsFrames;
-        onTelemetry({
-          ...effect.getStats(),
-          fps: Math.round(statsFrames / Math.max(statsElapsed, 0.001)),
-          frameMs: averageFrameSeconds * 1000,
-          webgpuLabel: webgpu.supported ? "WebGPU available" : "Compatible preview",
-          webgpuSupported: webgpu.supported,
-        });
-        statsElapsed = 0;
-        statsFrames = 0;
+      started = true;
+      window.clearTimeout(startupFallback);
+      renderer.setPixelRatio(
+        Math.min(
+          window.devicePixelRatio,
+          renderer.isWebGPURenderer
+            ? PREVIEW_WEBGPU_PIXEL_RATIO_CAP
+            : PREVIEW_WEBGL_PIXEL_RATIO_CAP,
+        ),
+      );
+      renderer.setClearColor("#06080d", 1);
+      rendererRef.current = renderer;
+
+      const scene = new THREE.Scene();
+      const camera = new THREE.PerspectiveCamera(PREVIEW_CAMERA_FOV, 1, 0.1, 80);
+      camera.position.set(0, 2.28, 6.15);
+      camera.lookAt(0, 2.18, 0);
+      const cameraDesiredState = createPreviewCameraState(camera);
+      const cameraRenderedState = clonePreviewCameraState(cameraDesiredState);
+      cameraRef.current = camera;
+      cameraDesiredStateRef.current = cameraDesiredState;
+      cameraRenderedStateRef.current = cameraRenderedState;
+      syncPreviewCamera(camera, cameraRenderedState);
+
+      const grid = new THREE.GridHelper(5.5, 16, "#243244", "#151d2a");
+      grid.position.y = -0.02;
+      for (const material of Array.isArray(grid.material) ? grid.material : [grid.material]) {
+        material.transparent = true;
+        material.opacity = 0.26;
       }
+      scene.add(grid);
+      const effect = new WispySmokeVFX({ ...params, renderer });
+      scene.add(effect.object3D);
+      effectRef.current = effect;
+      onTelemetry({
+        ...EMPTY_PREVIEW_STATS,
+        ...effect.getStats(),
+        webgpuLabel: label,
+        webgpuSupported: webgpu.supported,
+      });
+
+      let last = performance.now();
+      let statsElapsed = 0;
+      let statsFrames = 0;
+      const resize = () => {
+        const rect = canvas.getBoundingClientRect();
+        const width = Math.max(1, Math.floor(rect.width));
+        const height = Math.max(1, Math.floor(rect.height));
+        renderer.setSize(width, height, false);
+        camera.aspect = width / height;
+        camera.zoom = camera.aspect < 1 ? Math.max(0.66, Math.min(1, camera.aspect * 1.1)) : 1;
+        camera.updateProjectionMatrix();
+      };
+      observer = new ResizeObserver(resize);
+      observer.observe(canvas);
+      resize();
+
+      const tick = (now: number) => {
+        const rawDelta = Math.max(0, (now - last) / 1000);
+        const delta = Math.min(0.05, rawDelta);
+        const sampleDelta = rawDelta > 0.5 ? 0 : rawDelta;
+        last = now;
+        effect.update(delta, now / 1000);
+        if (cameraRenderedStateRef.current && cameraDesiredStateRef.current) {
+          updatePreviewCameraSmoothing(
+            camera,
+            cameraRenderedStateRef.current,
+            cameraDesiredStateRef.current,
+            delta,
+          );
+        }
+        renderer.render(scene, camera);
+        if (sampleDelta > 0) {
+          statsElapsed += sampleDelta;
+          statsFrames += 1;
+        }
+        if (statsElapsed >= 0.25) {
+          const averageFrameSeconds = statsElapsed / statsFrames;
+          onTelemetry({
+            ...effect.getStats(),
+            fps: Math.round(statsFrames / Math.max(statsElapsed, 0.001)),
+            frameMs: averageFrameSeconds * 1000,
+            webgpuLabel: label,
+            webgpuSupported: webgpu.supported,
+          });
+          statsElapsed = 0;
+          statsFrames = 0;
+        }
+        frame = requestAnimationFrame(tick);
+      };
       frame = requestAnimationFrame(tick);
     };
-    frame = requestAnimationFrame(tick);
+
+    startupFallback = window.setTimeout(() => {
+      if (disposed || started) {
+        return;
+      }
+      const renderer = createPreviewWebGLRenderer(canvas);
+      startPreview(
+        renderer ? "Compatible preview" : "Canvas fallback",
+        renderer ?? createCanvasFallbackRenderer(canvas),
+      );
+    }, PREVIEW_WEBGPU_INIT_TIMEOUT_MS + 500);
+
+    void (async () => {
+      onTelemetry({
+        ...EMPTY_PREVIEW_STATS,
+        webgpuLabel: "Starting preview",
+        webgpuSupported: webgpu.supported,
+      });
+      const { label, renderer } = await createPreviewRenderer(canvas, webgpu.supported);
+      startPreview(label, renderer);
+    })();
 
     return () => {
+      disposed = true;
+      window.clearTimeout(startupFallback);
       cancelAnimationFrame(frame);
-      observer.disconnect();
-      effect.dispose();
-      renderer.dispose();
+      observer?.disconnect();
+      effectRef.current?.dispose();
+      rendererRef.current?.dispose();
+      cameraDragRef.current = null;
+      cameraRef.current = null;
+      cameraDesiredStateRef.current = null;
+      cameraRenderedStateRef.current = null;
       rendererRef.current = null;
       effectRef.current = null;
     };
@@ -2814,10 +3503,161 @@ function PreviewViewport({
     effectRef.current?.setParams(params);
   }, [params]);
 
+  const endPreviewNavigation = useCallback((event?: React.PointerEvent<HTMLCanvasElement>) => {
+    const drag = cameraDragRef.current;
+    if (event && drag && drag.pointerId !== event.pointerId) {
+      return;
+    }
+    if (event && drag) {
+      try {
+        if (event.currentTarget.hasPointerCapture(drag.pointerId)) {
+          event.currentTarget.releasePointerCapture(drag.pointerId);
+        }
+      } catch {
+        // Pointer capture cleanup can fail in synthetic or detached event paths.
+      }
+    }
+    cameraDragRef.current = null;
+    setIsNavigating(false);
+  }, []);
+
+  const handlePreviewPointerDown = useCallback(
+    (event: React.PointerEvent<HTMLCanvasElement>) => {
+      const mode = getPreviewPointerNavigationMode(event, isApple);
+      if (!mode) {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      cameraDragRef.current = {
+        mode,
+        pointerId: event.pointerId,
+        previousX: event.clientX,
+        previousY: event.clientY,
+      };
+      setIsNavigating(true);
+      event.currentTarget.focus({ preventScroll: true });
+      try {
+        event.currentTarget.setPointerCapture(event.pointerId);
+      } catch {
+        // Pointer capture can be unavailable in some browser test environments.
+      }
+    },
+    [isApple],
+  );
+
+  const handlePreviewPointerMove = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    const drag = cameraDragRef.current;
+    const camera = cameraRef.current;
+    const cameraState = cameraDesiredStateRef.current;
+    if (!drag || drag.pointerId !== event.pointerId || !camera || !cameraState) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    const deltaX = event.clientX - drag.previousX;
+    const deltaY = event.clientY - drag.previousY;
+    drag.previousX = event.clientX;
+    drag.previousY = event.clientY;
+    if (Math.abs(deltaX) < 0.01 && Math.abs(deltaY) < 0.01) {
+      return;
+    }
+    if (drag.mode === "pan") {
+      panPreviewCamera(event.currentTarget, camera, cameraState, deltaX, deltaY);
+      return;
+    }
+    if (drag.mode === "zoom") {
+      zoomPreviewCamera(cameraState, Math.exp(deltaY * PREVIEW_POINTER_ZOOM_SPEED));
+      return;
+    }
+    orbitPreviewCamera(cameraState, deltaX, deltaY);
+  }, []);
+
+  const handlePreviewWheel = useCallback((event: WheelEvent) => {
+    const camera = cameraRef.current;
+    const cameraState = cameraDesiredStateRef.current;
+    const deltaY = normalizedWheelDeltaY(event);
+    if (!camera || !cameraState || Math.abs(deltaY) < 0.01) {
+      return;
+    }
+    event.preventDefault();
+    event.stopPropagation();
+    zoomPreviewCamera(cameraState, Math.exp(deltaY * PREVIEW_WHEEL_ZOOM_SPEED));
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) {
+      return;
+    }
+    canvas.addEventListener("wheel", handlePreviewWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", handlePreviewWheel);
+  }, [handlePreviewWheel]);
+
+  useEffect(() => {
+    const handleBlur = () => endPreviewNavigation();
+    window.addEventListener("blur", handleBlur);
+    return () => window.removeEventListener("blur", handleBlur);
+  }, [endPreviewNavigation]);
+
+  useEffect(() => {
+    if (!isMaximized) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      setIsMaximized(false);
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [isMaximized]);
+
   return (
-    <section className="preview-panel">
-      <canvas ref={canvasRef} aria-label="Wispy Smoke preview" />
-    </section>
+    <>
+      <section
+        className={`preview-panel ${isMaximized ? "preview-panel-maximized" : ""} ${
+          isNavigating ? "preview-panel-navigating" : ""
+        }`}
+      >
+        <button
+          type="button"
+          className="icon-button preview-maximize-button"
+          title={isMaximized ? "Minimize preview" : "Maximize preview"}
+          aria-label={isMaximized ? "Minimize preview" : "Maximize preview"}
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={() => setIsMaximized((current) => !current)}
+        >
+          {isMaximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+        </button>
+        <canvas
+          ref={canvasRef}
+          aria-label="Wispy Smoke preview"
+          tabIndex={0}
+          onAuxClick={(event) => {
+            if (event.button === 1) {
+              event.preventDefault();
+              event.stopPropagation();
+            }
+          }}
+          onPointerCancel={endPreviewNavigation}
+          onPointerDown={handlePreviewPointerDown}
+          onPointerMove={handlePreviewPointerMove}
+          onPointerUp={endPreviewNavigation}
+          onLostPointerCapture={endPreviewNavigation}
+        />
+      </section>
+      {isMaximized ? (
+        <div
+          className="preview-modal-backdrop"
+          role="presentation"
+          onPointerDown={() => setIsMaximized(false)}
+        />
+      ) : null}
+    </>
   );
 }
 

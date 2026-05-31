@@ -723,6 +723,48 @@ button {
   display: block;
   width: 100%;
   height: 100%;
+  cursor: grab;
+  outline: none;
+  touch-action: none;
+  user-select: none;
+}
+
+.preview-panel canvas:focus-visible {
+  outline: 1px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.preview-panel-navigating canvas {
+  cursor: grabbing;
+}
+
+.preview-maximize-button {
+  position: absolute;
+  z-index: 2;
+  top: 8px;
+  right: 8px;
+  width: 30px;
+  height: 30px;
+  opacity: 0.82;
+}
+
+.preview-maximize-button:hover,
+.preview-panel-maximized .preview-maximize-button {
+  opacity: 1;
+}
+
+.preview-panel-maximized {
+  position: fixed;
+  z-index: 55;
+  inset: 68px 18px 18px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.54);
+}
+
+.preview-modal-backdrop {
+  position: fixed;
+  z-index: 54;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.64);
 }
 
 .panel {
@@ -820,6 +862,17 @@ button {
   gap: 5px;
 }
 
+.curve-field {
+  display: grid;
+  gap: 5px;
+}
+
+.curve-field span {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 5px;
+}
+
 .diagnostics {
   display: grid;
   gap: 6px;
@@ -906,6 +959,25 @@ button {
 .shortcut-list {
   display: grid;
   padding: 8px;
+}
+
+.shortcut-divider {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 11px 4px 7px;
+  color: var(--muted-foreground);
+  font-size: 10px;
+  font-weight: 700;
+  text-transform: uppercase;
+}
+
+.shortcut-divider::before,
+.shortcut-divider::after {
+  flex: 1 1 auto;
+  height: 1px;
+  background: var(--border);
+  content: "";
 }
 
 .shortcut-row {
@@ -1047,6 +1119,10 @@ button {
   .workspace {
     grid-template-columns: 1fr;
     grid-template-rows: 240px 620px auto;
+  }
+
+  .preview-panel-maximized {
+    inset: 12px;
   }
 
   .node-palette,

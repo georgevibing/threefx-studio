@@ -13,7 +13,10 @@ export function normalizeWispySmokeParams(
   return {
     ...DEFAULT_WISPY_SMOKE_PARAMS,
     ...params,
+    backendMode: params.backendMode ?? DEFAULT_WISPY_SMOKE_PARAMS.backendMode,
     color: params.color ?? DEFAULT_WISPY_SMOKE_PARAMS.color,
+    gridResolution: params.gridResolution ?? DEFAULT_WISPY_SMOKE_PARAMS.gridResolution,
+    opacityRamp: params.opacityRamp ?? DEFAULT_WISPY_SMOKE_PARAMS.opacityRamp,
     quality: params.quality ?? DEFAULT_WISPY_SMOKE_PARAMS.quality,
     worldPosition: params.worldPosition ?? DEFAULT_WISPY_SMOKE_PARAMS.worldPosition,
     wind: params.wind ?? DEFAULT_WISPY_SMOKE_PARAMS.wind,

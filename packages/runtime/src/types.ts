@@ -14,6 +14,11 @@ export interface VFXEffect<TParams> {
 export interface RuntimeQualityProfile {
   readonly id: "low" | "medium" | "high" | "cinematic";
   readonly maxParticles: number;
+  readonly maxRaySteps: number;
+  readonly shadowSteps: number;
+  readonly volumeGrid: readonly [number, number, number];
   readonly textureSize: number;
   readonly simulationScale: number;
 }
+
+export type RuntimeBackend = "webgpu" | "compat";

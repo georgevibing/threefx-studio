@@ -66,11 +66,11 @@ interface VFXEffect<TParams> {
 }
 ```
 
-Wispy Smoke currently uses a conservative Three.js particle-volume impostor with procedural shader detail. This keeps the vertical slice usable while leaving space for WebGPU compute and TSL backends.
+Wispy Smoke currently selects a WebGPU Eulerian fluid-grid backend when a WebGPU renderer is available, and falls back to a conservative Three.js particle preview otherwise. The WebGPU path owns a reusable `FluidGrid3D` runtime with TSL compute kernels for source injection, semi-Lagrangian advection, buoyancy and wind, vorticity confinement, divergence, Jacobi pressure solve, projection, dissipation, and render-volume packing. Rendering raymarches the packed simulated density/temperature volume with Beer-Lambert absorption, scattering, source emission, self-shadow sampling, and procedural detail modulation. Quality presets map to cubic simulation budgets: `low=32^3`, `medium=48^3`, `high=64^3`, and `cinematic=96^3`.
 
 ## Three.js WebGPU Boundaries
 
-Core graph schema must avoid direct Three.js coupling. Runtime and effects may import Three.js. WebGPU feature detection lives in runtime. Future WebGPU renderer-specific handles must stay in runtime/effects adapters, not core or exporter schema.
+Core graph schema must avoid direct Three.js coupling. Runtime and effects may import Three.js. WebGPU feature detection and renderer-handle checks live in runtime. WebGPU renderer-specific handles stay in runtime/effects adapters, not core or exporter schema.
 
 ## Exporter Architecture
 
@@ -78,7 +78,7 @@ The exporter accepts Effect IR and emits standalone files. Generated code must n
 
 ## Generated Code
 
-Generated classes include typed params, default values, lifecycle methods, and a usage snippet. Comments are limited to useful integration context. Generated code owns its local helper types so it can be pasted into another Three.js project.
+Generated classes include typed params, default values, lifecycle methods, and a usage snippet. The Wispy Smoke export owns its local helper types, WebGPU fluid solver, raymarched volume renderer, and compatibility particle fallback so it can be pasted into another Three.js project without ThreeFX package imports. Comments are limited to useful integration context.
 
 ## Testing Strategy
 
@@ -86,7 +86,7 @@ Vitest covers serialization/deserialization, port compatibility, validation diag
 
 ## Performance Strategy
 
-Default quality budgets avoid huge allocations. Runtime effects clamp delta time, use reusable typed arrays, and expose quality presets. Future WebGPU work should introspect device limits and scale resources automatically.
+Default quality budgets avoid huge allocations. Runtime effects clamp delta time, reuse GPU buffers/textures and fallback typed arrays, expose quality presets, and report active backend, fallback status, grid cells, solver passes, simulation time, and ray-step budget. The builder preview caps WebGPU raymarch pixel ratio to keep visual iteration responsive. Future GPU work should introspect device limits and scale resources automatically.
 
 ## Resource Lifecycle
 

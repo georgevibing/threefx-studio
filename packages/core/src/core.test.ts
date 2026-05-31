@@ -57,10 +57,26 @@ describe("@threefx/core", () => {
     const registry = createNodeRegistry();
     expect(
       registry.get("emitter.volume")?.parameterMetadata?.map((parameter) => parameter.id),
-    ).toEqual(expect.arrayContaining(["spawnRate", "lifetime", "radius", "height"]));
+    ).toEqual(
+      expect.arrayContaining(["spawnRate", "lifetime", "radius", "height", "sourceTemperature"]),
+    );
     expect(
       registry.get("render.volume")?.parameterMetadata?.map((parameter) => parameter.id),
-    ).toEqual(expect.arrayContaining(["size", "opacity", "softness", "color", "warmGlow"]));
+    ).toEqual(
+      expect.arrayContaining([
+        "size",
+        "opacity",
+        "softness",
+        "color",
+        "baseDensity",
+        "emissionColor",
+        "absorption",
+        "scattering",
+        "detailScale",
+        "detailStrength",
+        "detailSpeed",
+      ]),
+    );
   });
 
   it("compiles deterministic Effect IR", () => {
@@ -69,15 +85,42 @@ describe("@threefx/core", () => {
     const second = compileGraphToIR(graph);
     expect(first.ir?.graphHash).toBe(second.ir?.graphHash);
     expect(first.ir?.kind).toBe("ThreeFXEffectIR");
+    expect(first.ir?.runtime).toMatchObject({
+      backendMode: "auto",
+      fallback: "compat",
+      renderModel: "volume-raymarch",
+      solver: "eulerian-fluid-grid",
+    });
     expect(first.ir?.nodes.map((node) => node.id)).toContain("volume_render");
   });
 
   it("exposes typed parameter metadata", () => {
     expect(WISPY_SMOKE_PARAMETER_METADATA.map((parameter) => parameter.id)).toEqual(
-      expect.arrayContaining(["spawnRate", "lifetime", "density", "color", "quality"]),
+      expect.arrayContaining([
+        "spawnRate",
+        "lifetime",
+        "density",
+        "color",
+        "pressureIterations",
+        "diffusion",
+        "sourceTemperature",
+        "emissionColor",
+        "emissionIntensity",
+        "absorption",
+        "scattering",
+        "detailScale",
+        "detailStrength",
+        "detailSpeed",
+        "quality",
+        "backendMode",
+      ]),
     );
     expect(
       WISPY_SMOKE_PARAMETER_METADATA.find((parameter) => parameter.id === "spawnRate")?.type,
     ).toBe("float");
+    expect(
+      WISPY_SMOKE_PARAMETER_METADATA.find((parameter) => parameter.id === "renderStepScale")
+        ?.defaultValue,
+    ).toBe(0.42);
   });
 });

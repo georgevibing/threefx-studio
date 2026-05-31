@@ -1,5 +1,5 @@
 import { cloneJson } from "./clone";
-import { WISPY_SMOKE_PARAMETER_METADATA } from "./parameters";
+import { createDefaultWispySmokeParams, WISPY_SMOKE_PARAMETER_METADATA } from "./parameters";
 import { defaultNodeRegistry, type NodeRegistry } from "./registry";
 import { fnv1aHash, stableJson } from "./stableJson";
 import {
@@ -10,6 +10,9 @@ import {
   type EffectIRConnection,
   type EffectIRNode,
   type GraphDocument,
+  type QualityPreset,
+  type WispySmokeBackendMode,
+  type WispySmokeGridResolution,
 } from "./types";
 import { validateGraphDocument } from "./validation";
 
@@ -88,12 +91,17 @@ export function compileGraphToIR(
     }))
     .sort((left, right) => stableJson(left).localeCompare(stableJson(right)));
 
+  const parameterValues = {
+    ...createDefaultWispySmokeParams(),
+    ...graph.parameters,
+  };
+
   const hashSource = stableJson({
     schemaVersion: graph.schemaVersion,
     effectType: graph.effectType,
     nodes: orderedNodes,
     connections,
-    parameters: graph.parameters,
+    parameters: parameterValues,
   });
 
   const ir: EffectIR = {
@@ -102,8 +110,16 @@ export function compileGraphToIR(
     effectType: graph.effectType,
     effectName: graph.name,
     graphHash: fnv1aHash(hashSource),
+    runtime: {
+      backendMode: String(parameterValues.backendMode ?? "auto") as WispySmokeBackendMode,
+      fallback: "compat",
+      gridResolution: String(parameterValues.gridResolution ?? "medium") as WispySmokeGridResolution,
+      quality: String(parameterValues.quality ?? "high") as QualityPreset,
+      renderModel: "volume-raymarch",
+      solver: "eulerian-fluid-grid",
+    },
     parameters: WISPY_SMOKE_PARAMETER_METADATA,
-    parameterValues: cloneJson(graph.parameters),
+    parameterValues: cloneJson(parameterValues),
     nodes: orderedNodes,
     connections,
   };

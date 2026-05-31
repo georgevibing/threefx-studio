@@ -7,10 +7,38 @@ function paramsLiteral(params: ParameterMap): string {
 }
 
 export function createWispySmokeClassSource(ir: EffectIR, className: string): string {
-  return `import * as THREE from "three";
+  return `import * as THREE from "three/webgpu";
+import type { IUniform } from "three";
+import type { Node, UniformNode } from "three/webgpu";
+import type StorageBufferNodeBase from "three/src/nodes/accessors/StorageBufferNode.js";
+import {
+  Break,
+  Fn,
+  If,
+  attributeArray,
+  clamp as nodeClamp,
+  dot,
+  float,
+  instanceIndex,
+  int,
+  smoothstep as nodeSmoothstep,
+  texture3D,
+  textureStore,
+  uniform,
+  uint,
+  uvec3,
+  vec3,
+  vec4,
+} from "three/tsl";
+import { RaymarchingBox } from "three/examples/jsm/tsl/utils/Raymarching.js";
 
 export type WispySmokeQuality = "low" | "medium" | "high" | "cinematic";
+export type WispySmokeBackendMode = "auto" | "webgpu" | "compat";
+export type WispySmokeGridResolution = "low" | "medium" | "high" | "cinematic";
 export type Vec3 = readonly [number, number, number];
+export type CurveKeyframe = { readonly time: number; readonly value: number };
+export type CurveValue = readonly CurveKeyframe[];
+export type RuntimeBackend = "webgpu" | "compat";
 
 export interface VFXEffect<TParams> {
   readonly object3D: THREE.Object3D;
@@ -24,21 +52,54 @@ export interface ${className}Params {
   readonly spawnRate: number;
   readonly lifetime: number;
   readonly density: number;
+  readonly baseDensity: number;
   readonly opacity: number;
+  readonly opacityRamp: CurveValue;
   readonly size: number;
   readonly radius: number;
   readonly height: number;
   readonly riseSpeed: number;
+  readonly buoyantLift: number;
   readonly turbulence: number;
+  readonly turbulenceBands: number;
   readonly curlStrength: number;
+  readonly vorticityConfinement: number;
   readonly dissipation: number;
+  readonly densityDissipation: number;
+  readonly velocityDissipation: number;
+  readonly pressureIterations: number;
+  readonly diffusion: number;
+  readonly sourceTemperature: number;
+  readonly plumeTaper: number;
   readonly softness: number;
   readonly color: string;
+  readonly emissionColor: string;
+  readonly emissionIntensity: number;
+  readonly absorption: number;
+  readonly scattering: number;
+  readonly detailScale: number;
+  readonly detailStrength: number;
+  readonly detailSpeed: number;
   readonly seed: number;
   readonly quality: WispySmokeQuality;
+  readonly backendMode: WispySmokeBackendMode;
+  readonly gridResolution: WispySmokeGridResolution;
+  readonly renderStepScale: number;
+  readonly shadowQuality: number;
   readonly worldPosition: Vec3;
   readonly wind: Vec3;
-  readonly warmGlow: boolean;
+}
+
+export interface ${className}Stats {
+  readonly backend: RuntimeBackend;
+  readonly fallbackActive: boolean;
+  readonly gridCells: number;
+  readonly gridResolution: Vec3;
+  readonly pressureIterations: number;
+  readonly requestedBackend: WispySmokeBackendMode;
+  readonly renderSteps: number;
+  readonly simulationMs: number;
+  readonly solverPasses: number;
 }
 
 export type ${className}Options = Partial<${className}Params> & {
@@ -46,16 +107,96 @@ export type ${className}Options = Partial<${className}Params> & {
   readonly position?: Vec3;
 };
 
+interface VolumeBounds {
+  readonly width: number;
+  readonly height: number;
+  readonly depth: number;
+}
+
+interface FluidUniforms {
+  readonly absorption: UniformNode<"float", number>;
+  readonly buoyancy: UniformNode<"float", number>;
+  readonly curlStrength: UniformNode<"float", number>;
+  readonly densityDissipation: UniformNode<"float", number>;
+  readonly detailScale: UniformNode<"float", number>;
+  readonly detailSpeed: UniformNode<"float", number>;
+  readonly detailStrength: UniformNode<"float", number>;
+  readonly diffusion: UniformNode<"float", number>;
+  readonly dt: UniformNode<"float", number>;
+  readonly emissionColor: UniformNode<"color", THREE.Color>;
+  readonly emissionIntensity: UniformNode<"float", number>;
+  readonly opacity: UniformNode<"float", number>;
+  readonly radius: UniformNode<"float", number>;
+  readonly riseSpeed: UniformNode<"float", number>;
+  readonly scattering: UniformNode<"float", number>;
+  readonly shadowSamples: UniformNode<"float", number>;
+  readonly smokeColor: UniformNode<"color", THREE.Color>;
+  readonly sourceRate: UniformNode<"float", number>;
+  readonly sourceTemperature: UniformNode<"float", number>;
+  readonly steps: UniformNode<"float", number>;
+  readonly time: UniformNode<"float", number>;
+  readonly turbulence: UniformNode<"float", number>;
+  readonly velocityDissipation: UniformNode<"float", number>;
+  readonly vorticity: UniformNode<"float", number>;
+  readonly wind: UniformNode<"vec3", THREE.Vector3>;
+}
+
+type Texture3DNode = ReturnType<typeof texture3D>;
+type Vec4StorageBuffer = StorageBufferNodeBase<"vec4">;
+type FloatStorageBuffer = StorageBufferNodeBase<"float">;
+
+interface SmokeRaymarchArgs {
+  readonly [key: string]: unknown;
+  readonly absorption: Node<"float">;
+  readonly detailScale: Node<"float">;
+  readonly detailSpeed: Node<"float">;
+  readonly detailStrength: Node<"float">;
+  readonly emissionColor: Node<"color">;
+  readonly emissionIntensity: Node<"float">;
+  readonly opacity: Node<"float">;
+  readonly scattering: Node<"float">;
+  readonly shadowSamples: Node<"float">;
+  readonly smokeColor: Node<"color">;
+  readonly steps: Node<"float">;
+  readonly texture: Texture3DNode;
+  readonly time: Node<"float">;
+}
+
+interface ComputeRenderer {
+  compute(computeNode: object | readonly object[], dispatchSize?: number | readonly number[]): void | Promise<void>;
+}
+
+interface SmokeParticle {
+  age: number;
+  angle: number;
+  baseSize: number;
+  lifetime: number;
+  velocityX: number;
+  velocityY: number;
+  velocityZ: number;
+  x: number;
+  y: number;
+  z: number;
+}
+
+const RUNTIME_SOLVER = "eulerian-fluid-grid";
 const DEFAULT_PARAMS: ${className}Params = ${paramsLiteral(ir.parameterValues)} as ${className}Params;
 
-const QUALITY: Record<WispySmokeQuality, { maxParticles: number }> = {
-  low: { maxParticles: 96 },
-  medium: { maxParticles: 180 },
-  high: { maxParticles: 320 },
-  cinematic: { maxParticles: 560 },
+const QUALITY: Record<WispySmokeQuality, { maxParticles: number; maxRaySteps: number; volumeGrid: Vec3 }> = {
+  low: { maxParticles: 64, maxRaySteps: 48, volumeGrid: [32, 32, 32] },
+  medium: { maxParticles: 96, maxRaySteps: 64, volumeGrid: [48, 48, 48] },
+  high: { maxParticles: 128, maxRaySteps: 80, volumeGrid: [64, 64, 64] },
+  cinematic: { maxParticles: 160, maxRaySteps: 112, volumeGrid: [96, 96, 96] },
 };
 
-const VERTEX_SHADER = \`
+const QUALITY_RANK: Record<WispySmokeQuality, number> = {
+  low: 0,
+  medium: 1,
+  high: 2,
+  cinematic: 3,
+};
+
+const COMPAT_VERTEX_SHADER = \`
 attribute float aAlpha;
 attribute float aAngle;
 attribute float aSize;
@@ -65,14 +206,16 @@ void main() {
   vAlpha = aAlpha;
   vAngle = aAngle;
   vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
-  gl_PointSize = max(1.0, aSize * (280.0 / max(0.01, -mvPosition.z)));
+  gl_PointSize = max(1.0, aSize * (260.0 / max(0.01, -mvPosition.z)));
   gl_Position = projectionMatrix * mvPosition;
 }
 \`;
 
-const FRAGMENT_SHADER = \`
+const COMPAT_FRAGMENT_SHADER = \`
 precision highp float;
 uniform vec3 uColor;
+uniform vec3 uEmissionColor;
+uniform float uEmissionIntensity;
 uniform float uOpacity;
 uniform float uSoftness;
 uniform float uTime;
@@ -99,137 +242,644 @@ void main() {
   float c = cos(vAngle);
   uv = mat2(c, -s, s, c) * uv;
   float radius = length(uv);
-  float radial = 1.0 - smoothstep(0.16 + uSoftness * 0.22, 0.5, radius);
-  float filamentA = noise(uv * 6.5 + vec2(uTime * 0.05, -uTime * 0.03));
-  float filamentB = noise(uv * 13.0 + vec2(-uTime * 0.025, uTime * 0.04));
-  float wisps = smoothstep(0.22, 0.82, filamentA * 0.72 + filamentB * 0.38 + (0.5 - radius) * 0.9);
-  float alpha = radial * wisps * vAlpha * uOpacity;
-  if (alpha < 0.015) discard;
-  vec3 color = mix(uColor * 0.62, uColor * 1.18, filamentA);
-  gl_FragColor = vec4(color, alpha);
+  float radial = 1.0 - smoothstep(0.14 + uSoftness * 0.24, 0.5, radius);
+  float filament = noise(uv * 7.0 + vec2(uTime * 0.05, -uTime * 0.04));
+  float alpha = radial * smoothstep(0.18, 0.82, filament + (0.5 - radius) * 0.8) * vAlpha * uOpacity;
+  if (alpha < 0.012) discard;
+  vec3 source = mix(uEmissionColor * uEmissionIntensity, uColor, smoothstep(0.2, 0.62, radius));
+  gl_FragColor = vec4(mix(uColor * 0.72, source, vAlpha * 0.28), alpha);
 }
 \`;
 
-interface Particle {
-  age: number;
-  angle: number;
-  baseSize: number;
-  lifetime: number;
-  seed: number;
-  velocityX: number;
-  velocityY: number;
-  velocityZ: number;
-  x: number;
-  y: number;
-  z: number;
-}
+const VOLUME_RAYMARCH = Fn(({
+  absorption,
+  detailScale,
+  detailSpeed,
+  detailStrength,
+  emissionColor,
+  emissionIntensity,
+  opacity,
+  scattering,
+  shadowSamples,
+  smokeColor,
+  steps,
+  texture,
+  time,
+}: SmokeRaymarchArgs) => {
+  // Beer-Lambert absorption with single-scatter lighting over the packed fluid volume.
+  const finalColor = vec4(0).toVar();
+  const lightDir = vec3(0.36, 0.82, 0.18).normalize();
 
-function mulberry32(seed: number): () => number {
-  let value = seed >>> 0;
-  return () => {
-    value += 0x6d2b79f5;
-    let t = value;
-    t = Math.imul(t ^ (t >>> 15), t | 1);
-    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
-  };
-}
+  RaymarchingBox(steps, ({ positionRay }) => {
+    const uvw = positionRay.add(0.5).clamp(0.001, 0.999);
+    const packed = texture.sample(uvw).toVar();
+    const baseDensity = float(packed.r).toVar();
+    const temperature = float(packed.g).toVar();
+    const bakedLight = float(packed.b).toVar();
+    const detailCoord = uvw.mul(detailScale).add(vec3(time.mul(detailSpeed).mul(0.13), time.mul(detailSpeed).mul(-0.19), time.mul(detailSpeed).mul(0.11)));
+    const grain = detailCoord.x.mul(12.9898).add(detailCoord.y.mul(78.233)).add(detailCoord.z.mul(37.719)).sin().mul(43758.5453).fract();
+    const detail = grain.sub(0.5).mul(detailStrength);
+    const density = baseDensity.mul(float(1).add(detail)).clamp(0, 1).toVar();
+    const selfShadow = texture.sample(uvw.add(lightDir.mul(0.035))).r
+      .add(texture.sample(uvw.add(lightDir.mul(0.075))).r.mul(nodeSmoothstep(1, 4, shadowSamples)))
+      .add(texture.sample(uvw.add(lightDir.mul(0.13))).r.mul(nodeSmoothstep(4, 10, shadowSamples)))
+      .mul(0.32)
+      .mul(absorption);
+    const transmittance = selfShadow.negate().exp().mul(bakedLight.mul(0.4).add(0.72)).clamp(0.12, 1.15);
+    const smoke = smokeColor.mul(scattering).mul(transmittance);
+    const sourceGlow = emissionColor.mul(emissionIntensity).mul(temperature).mul(nodeSmoothstep(0.01, 0.58, density));
+    const alpha = float(1).sub(density.mul(absorption).negate().exp()).mul(opacity).clamp(0, 0.92);
+    const sampleColor = smoke.add(sourceGlow).mul(alpha);
+    finalColor.rgb.addAssign(sampleColor.mul(float(1).sub(finalColor.a)));
+    finalColor.a.addAssign(alpha.mul(float(1).sub(finalColor.a)));
+
+    If(finalColor.a.greaterThan(0.985), () => {
+      Break();
+    });
+  });
+
+  return finalColor;
+});
 
 function clamp(value: number, min: number, max: number): number {
   return Math.min(max, Math.max(min, value));
 }
 
-function smoothstep(edge0: number, edge1: number, value: number): number {
-  const t = clamp((value - edge0) / (edge1 - edge0), 0, 1);
-  return t * t * (3 - 2 * t);
+function isWebGPURenderer(renderer: unknown): boolean {
+  return Boolean(renderer && typeof renderer === "object" && (renderer as { readonly isWebGPURenderer?: unknown }).isWebGPURenderer === true);
+}
+
+function hasComputeRenderer(renderer: unknown): renderer is ComputeRenderer {
+  return Boolean(renderer && typeof renderer === "object" && "compute" in renderer);
+}
+
+function normalizeParams(params: Partial<${className}Params> = {}): ${className}Params {
+  return {
+    ...DEFAULT_PARAMS,
+    ...params,
+    backendMode: params.backendMode ?? DEFAULT_PARAMS.backendMode,
+    color: params.color ?? DEFAULT_PARAMS.color,
+    emissionColor: params.emissionColor ?? DEFAULT_PARAMS.emissionColor,
+    gridResolution: params.gridResolution ?? DEFAULT_PARAMS.gridResolution,
+    opacityRamp: params.opacityRamp ?? DEFAULT_PARAMS.opacityRamp,
+    quality: params.quality ?? DEFAULT_PARAMS.quality,
+    worldPosition: params.worldPosition ?? DEFAULT_PARAMS.worldPosition,
+    wind: params.wind ?? DEFAULT_PARAMS.wind,
+  };
+}
+
+function resolveFluidBounds(params: ${className}Params): VolumeBounds {
+  const windSpread = Math.hypot(params.wind[0], params.wind[2]) * params.lifetime * 0.42;
+  const sourceSpread = params.radius * 4 + params.size * 1.65 + params.turbulence * 0.42 + windSpread;
+  const width = Math.max(1.4, sourceSpread, params.height * 0.38);
+  return { depth: width, height: Math.max(0.75, params.height), width };
+}
+
+function resolveEffectiveGridResolution(params: ${className}Params): WispySmokeGridResolution {
+  return QUALITY_RANK[params.gridResolution] <= QUALITY_RANK[params.quality] ? params.gridResolution : params.quality;
+}
+
+function resolveRenderSteps(params: ${className}Params): number {
+  return Math.max(16, Math.round(QUALITY[resolveEffectiveGridResolution(params)].maxRaySteps * params.renderStepScale));
+}
+
+function resolvePressureIterations(params: ${className}Params): number {
+  return Math.max(2, Math.round(params.pressureIterations));
+}
+
+function resolveSourceRadius(params: ${className}Params, bounds: VolumeBounds): number {
+  return clamp(params.radius / Math.max(bounds.width, bounds.depth), 0.02, 0.42);
+}
+
+function createFluidUniforms(params: ${className}Params): FluidUniforms {
+  const bounds = resolveFluidBounds(params);
+  return {
+    absorption: uniform(params.absorption),
+    buoyancy: uniform(params.buoyantLift),
+    curlStrength: uniform(params.curlStrength),
+    densityDissipation: uniform(params.densityDissipation),
+    detailScale: uniform(params.detailScale),
+    detailSpeed: uniform(params.detailSpeed),
+    detailStrength: uniform(params.detailStrength),
+    diffusion: uniform(params.diffusion),
+    dt: uniform(1 / 60),
+    emissionColor: uniform(new THREE.Color(params.emissionColor)),
+    emissionIntensity: uniform(params.emissionIntensity),
+    opacity: uniform(params.opacity),
+    radius: uniform(resolveSourceRadius(params, bounds)),
+    riseSpeed: uniform(params.riseSpeed),
+    scattering: uniform(params.scattering),
+    shadowSamples: uniform(params.shadowQuality),
+    smokeColor: uniform(new THREE.Color(params.color)),
+    sourceRate: uniform(params.spawnRate * params.density * 0.03),
+    sourceTemperature: uniform(params.sourceTemperature),
+    steps: uniform(resolveRenderSteps(params)),
+    time: uniform(0),
+    turbulence: uniform(params.turbulence),
+    velocityDissipation: uniform(params.velocityDissipation),
+    vorticity: uniform(params.vorticityConfinement),
+    wind: uniform(new THREE.Vector3(params.wind[0], params.wind[1], params.wind[2])),
+  };
+}
+
+function disposeStorageBuffer(node: Vec4StorageBuffer | FloatStorageBuffer): void {
+  const value = (node as { readonly value?: { dispose?: () => void } }).value;
+  value?.dispose?.();
+}
+
+class FluidGrid3D {
+  readonly cells: number;
+  readonly grid: Vec3;
+  readonly mesh: THREE.Mesh<THREE.BoxGeometry, THREE.NodeMaterial>;
+
+  private bounds: VolumeBounds;
+  private readonly clearNode: object;
+  private readonly densityA: Vec4StorageBuffer;
+  private readonly densityB: Vec4StorageBuffer;
+  private readonly velocityA: Vec4StorageBuffer;
+  private readonly velocityB: Vec4StorageBuffer;
+  private readonly pressureA: FloatStorageBuffer;
+  private readonly pressureB: FloatStorageBuffer;
+  private readonly divergence: FloatStorageBuffer;
+  private readonly renderTexture: THREE.Storage3DTexture;
+  private readonly geometry: THREE.BoxGeometry;
+  private readonly material: THREE.NodeMaterial;
+  private readonly uniforms: FluidUniforms;
+  private readonly pressureClearNode: object;
+  private readonly sourceNodes: readonly [object, object];
+  private readonly advectNodes: readonly [object, object];
+  private readonly buoyancyNodes: readonly [object, object];
+  private readonly vorticityNodes: readonly [object, object];
+  private readonly divergenceNodes: readonly [object, object];
+  private readonly jacobiNodes: readonly [object, object];
+  private readonly projectionNodes: readonly [readonly [object, object], readonly [object, object]];
+  private readonly packNodes: readonly [object, object];
+  private activeBuffer: 0 | 1 = 0;
+  private hasCleared = false;
+  private lastSimulationMs = 0;
+  private lastSolverPasses = 0;
+
+  constructor(params: ${className}Params) {
+    this.grid = QUALITY[resolveEffectiveGridResolution(params)].volumeGrid;
+    this.cells = this.grid[0] * this.grid[1] * this.grid[2];
+    this.bounds = resolveFluidBounds(params);
+    this.uniforms = createFluidUniforms(params);
+    this.densityA = attributeArray(this.cells, "vec4");
+    this.densityB = attributeArray(this.cells, "vec4");
+    this.velocityA = attributeArray(this.cells, "vec4");
+    this.velocityB = attributeArray(this.cells, "vec4");
+    this.pressureA = attributeArray(this.cells, "float");
+    this.pressureB = attributeArray(this.cells, "float");
+    this.divergence = attributeArray(this.cells, "float");
+    this.renderTexture = new THREE.Storage3DTexture(this.grid[0], this.grid[1], this.grid[2]);
+    this.renderTexture.format = THREE.RGBAFormat;
+    this.renderTexture.type = THREE.UnsignedByteType;
+    this.renderTexture.minFilter = THREE.LinearFilter;
+    this.renderTexture.magFilter = THREE.LinearFilter;
+    this.renderTexture.wrapS = THREE.ClampToEdgeWrapping;
+    this.renderTexture.wrapT = THREE.ClampToEdgeWrapping;
+    this.renderTexture.wrapR = THREE.ClampToEdgeWrapping;
+
+    const cloud = VOLUME_RAYMARCH({
+      absorption: this.uniforms.absorption,
+      detailScale: this.uniforms.detailScale,
+      detailSpeed: this.uniforms.detailSpeed,
+      detailStrength: this.uniforms.detailStrength,
+      emissionColor: this.uniforms.emissionColor,
+      emissionIntensity: this.uniforms.emissionIntensity,
+      opacity: this.uniforms.opacity,
+      scattering: this.uniforms.scattering,
+      shadowSamples: this.uniforms.shadowSamples,
+      smokeColor: this.uniforms.smokeColor,
+      steps: this.uniforms.steps,
+      texture: texture3D(this.renderTexture, null, 0),
+      time: this.uniforms.time,
+    });
+    this.material = new THREE.MeshBasicNodeMaterial();
+    this.material.outputNode = cloud;
+    this.material.side = THREE.BackSide;
+    this.material.transparent = true;
+    this.material.depthTest = false;
+    this.material.depthWrite = false;
+    this.material.blending = THREE.NormalBlending;
+    this.geometry = new THREE.BoxGeometry(1, 1, 1);
+    this.mesh = new THREE.Mesh(this.geometry, this.material);
+    this.mesh.name = "${className}EulerianFluidVolume";
+    this.mesh.frustumCulled = false;
+    this.mesh.renderOrder = 10;
+    this.applyBounds(params);
+
+    this.clearNode = this.createClearNode();
+    this.pressureClearNode = this.createPressureClearNode();
+    this.sourceNodes = [this.createSourceNode(this.densityA, this.velocityA), this.createSourceNode(this.densityB, this.velocityB)];
+    this.advectNodes = [
+      this.createAdvectNode(this.densityA, this.velocityA, this.densityB, this.velocityB),
+      this.createAdvectNode(this.densityB, this.velocityB, this.densityA, this.velocityA),
+    ];
+    this.buoyancyNodes = [this.createBuoyancyNode(this.densityA, this.velocityA), this.createBuoyancyNode(this.densityB, this.velocityB)];
+    this.vorticityNodes = [this.createVorticityNode(this.velocityA, this.velocityB), this.createVorticityNode(this.velocityB, this.velocityA)];
+    this.divergenceNodes = [this.createDivergenceNode(this.velocityA), this.createDivergenceNode(this.velocityB)];
+    this.jacobiNodes = [this.createJacobiNode(this.pressureA, this.pressureB), this.createJacobiNode(this.pressureB, this.pressureA)];
+    this.projectionNodes = [
+      [this.createProjectionNode(this.velocityA, this.velocityB, this.pressureA), this.createProjectionNode(this.velocityA, this.velocityB, this.pressureB)],
+      [this.createProjectionNode(this.velocityB, this.velocityA, this.pressureA), this.createProjectionNode(this.velocityB, this.velocityA, this.pressureB)],
+    ];
+    this.packNodes = [this.createPackNode(this.densityA, this.velocityA), this.createPackNode(this.densityB, this.velocityB)];
+  }
+
+  updateParams(params: ${className}Params): void {
+    this.applyBounds(params);
+    this.uniforms.absorption.value = params.absorption;
+    this.uniforms.buoyancy.value = params.buoyantLift;
+    this.uniforms.curlStrength.value = params.curlStrength;
+    this.uniforms.densityDissipation.value = params.densityDissipation;
+    this.uniforms.detailScale.value = params.detailScale;
+    this.uniforms.detailSpeed.value = params.detailSpeed;
+    this.uniforms.detailStrength.value = params.detailStrength;
+    this.uniforms.diffusion.value = params.diffusion;
+    this.uniforms.emissionColor.value.set(params.emissionColor);
+    this.uniforms.emissionIntensity.value = params.emissionIntensity;
+    this.uniforms.opacity.value = params.opacity;
+    this.uniforms.radius.value = resolveSourceRadius(params, this.bounds);
+    this.uniforms.riseSpeed.value = params.riseSpeed;
+    this.uniforms.scattering.value = params.scattering;
+    this.uniforms.shadowSamples.value = params.shadowQuality;
+    this.uniforms.smokeColor.value.set(params.color);
+    this.uniforms.sourceRate.value = params.spawnRate * params.density * 0.03;
+    this.uniforms.sourceTemperature.value = params.sourceTemperature;
+    this.uniforms.steps.value = resolveRenderSteps(params);
+    this.uniforms.turbulence.value = params.turbulence;
+    this.uniforms.velocityDissipation.value = params.velocityDissipation;
+    this.uniforms.vorticity.value = params.vorticityConfinement;
+    this.uniforms.wind.value.set(params.wind[0], params.wind[1], params.wind[2]);
+  }
+
+  step(renderer: unknown, params: ${className}Params, deltaSeconds: number, elapsedSeconds: number): void {
+    this.updateParams(params);
+    this.uniforms.dt.value = clamp(deltaSeconds, 0, 1 / 30);
+    this.uniforms.time.value = Number.isFinite(elapsedSeconds) ? elapsedSeconds : 0;
+    if (!hasComputeRenderer(renderer)) {
+      this.lastSimulationMs = 0;
+      this.lastSolverPasses = 0;
+      return;
+    }
+    const started = performance.now();
+    let passes = 0;
+    const dispatch = (node: object): void => {
+      renderer.compute(node);
+      passes += 1;
+    };
+    if (!this.hasCleared) {
+      dispatch(this.clearNode);
+      this.hasCleared = true;
+    }
+    dispatch(this.sourceNodes[this.activeBuffer]);
+    dispatch(this.advectNodes[this.activeBuffer]);
+    this.activeBuffer = this.activeBuffer === 0 ? 1 : 0;
+    dispatch(this.buoyancyNodes[this.activeBuffer]);
+    dispatch(this.vorticityNodes[this.activeBuffer]);
+    this.activeBuffer = this.activeBuffer === 0 ? 1 : 0;
+    dispatch(this.divergenceNodes[this.activeBuffer]);
+    dispatch(this.pressureClearNode);
+    let pressureBuffer: 0 | 1 = 0;
+    for (let index = 0; index < resolvePressureIterations(params); index += 1) {
+      dispatch(this.jacobiNodes[pressureBuffer]);
+      pressureBuffer = pressureBuffer === 0 ? 1 : 0;
+    }
+    dispatch(this.projectionNodes[this.activeBuffer][pressureBuffer]);
+    this.activeBuffer = this.activeBuffer === 0 ? 1 : 0;
+    dispatch(this.packNodes[this.activeBuffer]);
+    this.lastSolverPasses = passes;
+    this.lastSimulationMs = performance.now() - started;
+  }
+
+  getStats(params: ${className}Params): Pick<${className}Stats, "gridCells" | "gridResolution" | "pressureIterations" | "simulationMs" | "solverPasses"> {
+    return {
+      gridCells: this.cells,
+      gridResolution: this.grid,
+      pressureIterations: resolvePressureIterations(params),
+      simulationMs: this.lastSimulationMs,
+      solverPasses: this.lastSolverPasses,
+    };
+  }
+
+  dispose(): void {
+    this.geometry.dispose();
+    this.material.dispose();
+    this.renderTexture.dispose();
+    disposeStorageBuffer(this.densityA);
+    disposeStorageBuffer(this.densityB);
+    disposeStorageBuffer(this.velocityA);
+    disposeStorageBuffer(this.velocityB);
+    disposeStorageBuffer(this.pressureA);
+    disposeStorageBuffer(this.pressureB);
+    disposeStorageBuffer(this.divergence);
+  }
+
+  private applyBounds(params: ${className}Params): void {
+    this.bounds = resolveFluidBounds(params);
+    this.mesh.position.set(0, this.bounds.height * 0.5, 0);
+    this.mesh.scale.set(this.bounds.width, this.bounds.height, this.bounds.depth);
+  }
+
+  private createClearNode(): object {
+    return Fn(() => {
+      this.densityA.element(instanceIndex).assign(vec4(0));
+      this.densityB.element(instanceIndex).assign(vec4(0));
+      this.velocityA.element(instanceIndex).assign(vec4(0));
+      this.velocityB.element(instanceIndex).assign(vec4(0));
+      this.pressureA.element(instanceIndex).assign(0);
+      this.pressureB.element(instanceIndex).assign(0);
+      this.divergence.element(instanceIndex).assign(0);
+    })().compute(this.cells).setName("${className} Clear Fluid Grid") as object;
+  }
+
+  private createPressureClearNode(): object {
+    return Fn(() => {
+      this.pressureA.element(instanceIndex).assign(0);
+      this.pressureB.element(instanceIndex).assign(0);
+    })().compute(this.cells).setName("${className} Clear Pressure") as object;
+  }
+
+  private createSourceNode(density: Vec4StorageBuffer, velocity: Vec4StorageBuffer): object {
+    return Fn(() => {
+      const coord = this.cellCoord();
+      const uvw = this.cellUVW(coord);
+      const center = vec3(0.5, 0.08, 0.5);
+      const dist = uvw.sub(center).length();
+      const sourceMask = nodeSmoothstep(this.uniforms.radius.mul(0.32), this.uniforms.radius, dist).oneMinus();
+      const thermalPulse = uvw.y.mul(21.0).add(this.uniforms.time.mul(1.7)).sin().mul(0.15).add(0.9);
+      const currentDensity = density.element(instanceIndex);
+      const currentVelocity = velocity.element(instanceIndex);
+      density.element(instanceIndex).assign(vec4(currentDensity.x.add(sourceMask.mul(this.uniforms.sourceRate).mul(this.uniforms.dt)).clamp(0, 1), currentDensity.y.add(sourceMask.mul(this.uniforms.sourceTemperature).mul(this.uniforms.dt)).clamp(0, 1), currentDensity.z, currentDensity.w));
+      velocity.element(instanceIndex).assign(vec4(currentVelocity.xyz.add(vec3(this.uniforms.wind.x, this.uniforms.riseSpeed.mul(thermalPulse), this.uniforms.wind.z).mul(sourceMask).mul(this.uniforms.dt)), 0));
+    })().compute(this.cells).setName("${className} Source Injection") as object;
+  }
+
+  private createAdvectNode(sourceDensity: Vec4StorageBuffer, sourceVelocity: Vec4StorageBuffer, targetDensity: Vec4StorageBuffer, targetVelocity: Vec4StorageBuffer): object {
+    return Fn(() => {
+      const coord = this.cellCoord();
+      const velocity = sourceVelocity.element(instanceIndex).xyz;
+      const backCoord = coord.sub(velocity.mul(this.uniforms.dt).mul(vec3(this.grid[0], this.grid[1], this.grid[2])).toIVec3());
+      const advectedDensity = sourceDensity.element(this.linearIndex(backCoord.x, backCoord.y, backCoord.z));
+      const advectedVelocity = sourceVelocity.element(this.linearIndex(backCoord.x, backCoord.y, backCoord.z));
+      const neighborDensity = this.neighborDensityAverage(sourceDensity, coord);
+      const densityValue = advectedDensity.x.mul(1 - this.uniforms.densityDissipation.mul(this.uniforms.dt)).mix(neighborDensity, this.uniforms.diffusion).clamp(0, 1);
+      const temperatureValue = advectedDensity.y.mul(1 - this.uniforms.densityDissipation.mul(this.uniforms.dt).mul(0.72)).clamp(0, 1);
+      targetDensity.element(instanceIndex).assign(vec4(densityValue, temperatureValue, advectedDensity.z, advectedDensity.w));
+      targetVelocity.element(instanceIndex).assign(vec4(advectedVelocity.xyz.mul(1 - this.uniforms.velocityDissipation.mul(this.uniforms.dt)), 0));
+    })().compute(this.cells).setName("${className} Semi Lagrangian Advection") as object;
+  }
+
+  private createBuoyancyNode(density: Vec4StorageBuffer, velocity: Vec4StorageBuffer): object {
+    return Fn(() => {
+      const packed = density.element(instanceIndex);
+      const currentVelocity = velocity.element(instanceIndex).xyz;
+      const thermalLift = packed.y.mul(this.uniforms.buoyancy).sub(packed.x.mul(0.025));
+      velocity.element(instanceIndex).assign(vec4(currentVelocity.add(vec3(this.uniforms.wind.x, thermalLift.add(this.uniforms.riseSpeed.mul(0.08)), this.uniforms.wind.z).mul(this.uniforms.dt)), 0));
+    })().compute(this.cells).setName("${className} Buoyancy Wind") as object;
+  }
+
+  private createVorticityNode(sourceVelocity: Vec4StorageBuffer, targetVelocity: Vec4StorageBuffer): object {
+    return Fn(() => {
+      const coord = this.cellCoord();
+      const left = sourceVelocity.element(this.linearIndex(coord.x.sub(1), coord.y, coord.z)).xyz;
+      const right = sourceVelocity.element(this.linearIndex(coord.x.add(1), coord.y, coord.z)).xyz;
+      const down = sourceVelocity.element(this.linearIndex(coord.x, coord.y.sub(1), coord.z)).xyz;
+      const up = sourceVelocity.element(this.linearIndex(coord.x, coord.y.add(1), coord.z)).xyz;
+      const back = sourceVelocity.element(this.linearIndex(coord.x, coord.y, coord.z.sub(1))).xyz;
+      const front = sourceVelocity.element(this.linearIndex(coord.x, coord.y, coord.z.add(1))).xyz;
+      const curl = vec3(up.z.sub(down.z).sub(front.y.sub(back.y)), front.x.sub(back.x).sub(right.z.sub(left.z)), right.y.sub(left.y).sub(up.x.sub(down.x))).mul(0.5);
+      const current = sourceVelocity.element(instanceIndex).xyz;
+      targetVelocity.element(instanceIndex).assign(vec4(current.add(curl.mul(this.uniforms.vorticity).mul(this.uniforms.curlStrength).mul(this.uniforms.dt)), 0));
+    })().compute(this.cells).setName("${className} Vorticity Confinement") as object;
+  }
+
+  private createDivergenceNode(velocity: Vec4StorageBuffer): object {
+    return Fn(() => {
+      const coord = this.cellCoord();
+      const left = velocity.element(this.linearIndex(coord.x.sub(1), coord.y, coord.z)).x;
+      const right = velocity.element(this.linearIndex(coord.x.add(1), coord.y, coord.z)).x;
+      const down = velocity.element(this.linearIndex(coord.x, coord.y.sub(1), coord.z)).y;
+      const up = velocity.element(this.linearIndex(coord.x, coord.y.add(1), coord.z)).y;
+      const back = velocity.element(this.linearIndex(coord.x, coord.y, coord.z.sub(1))).z;
+      const front = velocity.element(this.linearIndex(coord.x, coord.y, coord.z.add(1))).z;
+      this.divergence.element(instanceIndex).assign(right.sub(left).add(up.sub(down)).add(front.sub(back)).mul(0.5));
+    })().compute(this.cells).setName("${className} Divergence") as object;
+  }
+
+  private createJacobiNode(sourcePressure: FloatStorageBuffer, targetPressure: FloatStorageBuffer): object {
+    return Fn(() => {
+      const coord = this.cellCoord();
+      const pressureSum = sourcePressure.element(this.linearIndex(coord.x.sub(1), coord.y, coord.z))
+        .add(sourcePressure.element(this.linearIndex(coord.x.add(1), coord.y, coord.z)))
+        .add(sourcePressure.element(this.linearIndex(coord.x, coord.y.sub(1), coord.z)))
+        .add(sourcePressure.element(this.linearIndex(coord.x, coord.y.add(1), coord.z)))
+        .add(sourcePressure.element(this.linearIndex(coord.x, coord.y, coord.z.sub(1))))
+        .add(sourcePressure.element(this.linearIndex(coord.x, coord.y, coord.z.add(1))));
+      targetPressure.element(instanceIndex).assign(pressureSum.sub(this.divergence.element(instanceIndex)).div(6));
+    })().compute(this.cells).setName("${className} Jacobi Pressure") as object;
+  }
+
+  private createProjectionNode(sourceVelocity: Vec4StorageBuffer, targetVelocity: Vec4StorageBuffer, pressure: FloatStorageBuffer): object {
+    return Fn(() => {
+      const coord = this.cellCoord();
+      const pressureGradient = vec3(
+        pressure.element(this.linearIndex(coord.x.add(1), coord.y, coord.z)).sub(pressure.element(this.linearIndex(coord.x.sub(1), coord.y, coord.z))),
+        pressure.element(this.linearIndex(coord.x, coord.y.add(1), coord.z)).sub(pressure.element(this.linearIndex(coord.x, coord.y.sub(1), coord.z))),
+        pressure.element(this.linearIndex(coord.x, coord.y, coord.z.add(1))).sub(pressure.element(this.linearIndex(coord.x, coord.y, coord.z.sub(1)))),
+      ).mul(0.5);
+      targetVelocity.element(instanceIndex).assign(vec4(sourceVelocity.element(instanceIndex).xyz.sub(pressureGradient), 0));
+    })().compute(this.cells).setName("${className} Projection") as object;
+  }
+
+  private createPackNode(density: Vec4StorageBuffer, velocity: Vec4StorageBuffer): object {
+    return Fn(() => {
+      const packed = density.element(instanceIndex);
+      const speed = dot(velocity.element(instanceIndex).xyz, velocity.element(instanceIndex).xyz).sqrt().clamp(0, 1);
+      const light = float(1).sub(this.neighborDensityAverage(density, this.cellCoord()).mul(this.uniforms.absorption).mul(0.45)).clamp(0.08, 1);
+      textureStore(this.renderTexture, this.cellTextureCoord(), vec4(packed.x, packed.y, light, speed));
+    })().compute(this.cells).setName("${className} Render Volume Pack") as object;
+  }
+
+  private cellCoord(): Node<"ivec3"> {
+    const layerSize = this.grid[0] * this.grid[1];
+    const z = int(instanceIndex.div(layerSize));
+    const remainder = int(instanceIndex.sub(uint(z.mul(layerSize))));
+    const y = int(remainder.div(this.grid[0]));
+    const x = int(remainder.sub(y.mul(this.grid[0])));
+    return vec3(x, y, z).toIVec3();
+  }
+
+  private cellTextureCoord(): Node<"uvec3"> {
+    const coord = this.cellCoord();
+    return uvec3(uint(coord.x), uint(coord.y), uint(coord.z));
+  }
+
+  private cellUVW(coord: Node<"ivec3">): Node<"vec3"> {
+    return vec3(float(coord.x).div(Math.max(1, this.grid[0] - 1)), float(coord.y).div(Math.max(1, this.grid[1] - 1)), float(coord.z).div(Math.max(1, this.grid[2] - 1)));
+  }
+
+  private linearIndex(x: Node<"int">, y: Node<"int">, z: Node<"int">): Node<"uint"> {
+    const clampedX = int(nodeClamp(float(x), 0, this.grid[0] - 1));
+    const clampedY = int(nodeClamp(float(y), 0, this.grid[1] - 1));
+    const clampedZ = int(nodeClamp(float(z), 0, this.grid[2] - 1));
+    return uint(clampedX.add(clampedY.mul(this.grid[0])).add(clampedZ.mul(this.grid[0] * this.grid[1])));
+  }
+
+  private neighborDensityAverage(density: Vec4StorageBuffer, coord: Node<"ivec3">): Node<"float"> {
+    const left = density.element(this.linearIndex(coord.x.sub(1), coord.y, coord.z)).x;
+    const right = density.element(this.linearIndex(coord.x.add(1), coord.y, coord.z)).x;
+    const down = density.element(this.linearIndex(coord.x, coord.y.sub(1), coord.z)).x;
+    const up = density.element(this.linearIndex(coord.x, coord.y.add(1), coord.z)).x;
+    const back = density.element(this.linearIndex(coord.x, coord.y, coord.z.sub(1))).x;
+    const front = density.element(this.linearIndex(coord.x, coord.y, coord.z.add(1))).x;
+    return left.add(right).add(down).add(up).add(back).add(front).div(6);
+  }
 }
 
 export class ${className} implements VFXEffect<${className}Params> {
   readonly object3D = new THREE.Group();
+  readonly solver = RUNTIME_SOLVER;
+
+  private renderer: unknown;
   private params: ${className}Params;
-  private particles: Particle[] = [];
-  private geometry = new THREE.BufferGeometry();
-  private material = new THREE.ShaderMaterial({
-    vertexShader: VERTEX_SHADER,
-    fragmentShader: FRAGMENT_SHADER,
-    uniforms: {
-      uColor: { value: new THREE.Color(DEFAULT_PARAMS.color) },
-      uOpacity: { value: DEFAULT_PARAMS.opacity },
-      uSoftness: { value: DEFAULT_PARAMS.softness },
-      uTime: { value: 0 },
-    },
-    transparent: true,
-    depthWrite: false,
-    blending: THREE.NormalBlending,
-  });
-  private points = new THREE.Points(this.geometry, this.material);
+  private backend: RuntimeBackend = "compat";
+  private readonly geometry: THREE.BufferGeometry;
+  private readonly material: THREE.ShaderMaterial;
+  private readonly points: THREE.Points;
+  private fluid: FluidGrid3D | null = null;
+  private particles: SmokeParticle[] = [];
   private positions = new Float32Array(0);
   private alphas = new Float32Array(0);
   private sizes = new Float32Array(0);
   private angles = new Float32Array(0);
-  private random: () => number;
   private maxParticles = 0;
   private spawnCarry = 0;
-  private emitted = 0;
 
   constructor(options: ${className}Options = {}) {
-    const { position, renderer: _renderer, ...params } = options;
-    this.params = { ...DEFAULT_PARAMS, ...params, worldPosition: params.worldPosition ?? position ?? DEFAULT_PARAMS.worldPosition };
-    this.random = mulberry32(this.params.seed);
+    const { position, renderer, ...params } = options;
+    this.renderer = renderer;
+    this.params = normalizeParams(params.worldPosition || !position ? params : { ...params, worldPosition: position });
+    this.backend = this.resolveBackend();
+    this.geometry = new THREE.BufferGeometry();
+    this.material = new THREE.ShaderMaterial({
+      vertexShader: COMPAT_VERTEX_SHADER,
+      fragmentShader: COMPAT_FRAGMENT_SHADER,
+      uniforms: {
+        uColor: { value: new THREE.Color(this.params.color) },
+        uEmissionColor: { value: new THREE.Color(this.params.emissionColor) },
+        uEmissionIntensity: { value: this.params.emissionIntensity },
+        uOpacity: { value: this.params.opacity },
+        uSoftness: { value: this.params.softness },
+        uTime: { value: 0 },
+      },
+      transparent: true,
+      depthWrite: false,
+      depthTest: true,
+      blending: THREE.NormalBlending,
+    });
+    this.points = new THREE.Points(this.geometry, this.material);
     this.points.frustumCulled = false;
     this.object3D.name = "${className}";
     this.object3D.add(this.points);
-    this.applyParams();
-    this.reallocate();
+    this.applyTransform();
+    this.reallocateCompatibilityParticles();
+    this.applyBackendResources();
   }
 
   update(deltaSeconds: number, elapsedSeconds = performance.now() / 1000): void {
     const dt = clamp(deltaSeconds, 0, 1 / 15);
-    this.material.uniforms.uTime.value = elapsedSeconds;
-    this.spawnCarry += this.params.spawnRate * dt;
-    const count = Math.floor(this.spawnCarry);
-    this.spawnCarry -= count;
-    for (let index = 0; index < count && this.particles.length < this.maxParticles; index += 1) {
-      this.particles.push(this.createParticle());
+    (this.material.uniforms.uTime as IUniform<number>).value = elapsedSeconds;
+    if (this.backend === "webgpu") {
+      this.ensureFluid();
+      this.fluid?.step(this.renderer, this.params, dt, elapsedSeconds);
+      this.geometry.setDrawRange(0, 0);
+      return;
     }
-    this.integrate(dt, elapsedSeconds);
-    this.writeGeometry();
+    this.spawnParticles(dt);
+    this.integrateParticles(dt);
+    this.writeCompatGeometry();
   }
 
   setParams(params: Partial<${className}Params>): void {
-    const quality = this.params.quality;
-    const seed = this.params.seed;
-    this.params = { ...this.params, ...params };
-    this.applyParams();
-    if (quality !== this.params.quality) this.reallocate();
-    if (seed !== this.params.seed) {
-      this.random = mulberry32(this.params.seed);
-      this.particles = [];
-      this.spawnCarry = 0;
-      this.emitted = 0;
+    const previousQuality = this.params.quality;
+    const previousGridResolution = this.params.gridResolution;
+    const previousBackend = this.backend;
+    this.params = normalizeParams({ ...this.params, ...params });
+    this.backend = this.resolveBackend();
+    (this.material.uniforms.uColor as IUniform<THREE.Color>).value.set(this.params.color);
+    (this.material.uniforms.uEmissionColor as IUniform<THREE.Color>).value.set(this.params.emissionColor);
+    (this.material.uniforms.uEmissionIntensity as IUniform<number>).value = this.params.emissionIntensity;
+    (this.material.uniforms.uOpacity as IUniform<number>).value = this.params.opacity;
+    (this.material.uniforms.uSoftness as IUniform<number>).value = this.params.softness;
+    this.applyTransform();
+    if (previousQuality !== this.params.quality || previousGridResolution !== this.params.gridResolution || previousBackend !== this.backend) {
+      this.disposeFluid();
+      this.reallocateCompatibilityParticles();
     }
+    this.applyBackendResources();
+    this.fluid?.updateParams(this.params);
   }
 
   getParams(): Readonly<${className}Params> {
     return this.params;
   }
 
+  getStats(): ${className}Stats {
+    const fluidStats = this.fluid?.getStats(this.params);
+    const grid = fluidStats?.gridResolution ?? QUALITY[resolveEffectiveGridResolution(this.params)].volumeGrid;
+    return {
+      backend: this.backend,
+      fallbackActive: this.backend !== "webgpu",
+      gridCells: fluidStats?.gridCells ?? (this.backend === "webgpu" ? grid[0] * grid[1] * grid[2] : 0),
+      gridResolution: grid,
+      pressureIterations: fluidStats?.pressureIterations ?? resolvePressureIterations(this.params),
+      renderSteps: resolveRenderSteps(this.params),
+      requestedBackend: this.params.backendMode,
+      simulationMs: fluidStats?.simulationMs ?? 0,
+      solverPasses: fluidStats?.solverPasses ?? 0,
+    };
+  }
+
   dispose(): void {
-    this.object3D.remove(this.points);
+    this.disposeFluid();
     this.geometry.dispose();
     this.material.dispose();
   }
 
-  private applyParams(): void {
-    const [x, y, z] = this.params.worldPosition;
-    this.object3D.position.set(x, y, z);
-    this.material.uniforms.uColor.value.set(this.params.color);
-    this.material.uniforms.uOpacity.value = this.params.opacity;
-    this.material.uniforms.uSoftness.value = this.params.softness;
+  private resolveBackend(): RuntimeBackend {
+    if (this.params.backendMode === "compat") return "compat";
+    return isWebGPURenderer(this.renderer) ? "webgpu" : "compat";
   }
 
-  private reallocate(): void {
-    this.maxParticles = Math.max(16, Math.min(QUALITY[this.params.quality].maxParticles, Math.ceil(this.params.spawnRate * this.params.lifetime * 1.55)));
+  private applyBackendResources(): void {
+    this.points.visible = this.backend === "compat";
+    if (this.backend === "webgpu") this.ensureFluid();
+    if (this.fluid) this.fluid.mesh.visible = this.backend === "webgpu";
+  }
+
+  private ensureFluid(): void {
+    if (this.fluid) return;
+    this.fluid = new FluidGrid3D(this.params);
+    this.fluid.mesh.visible = this.backend === "webgpu";
+    this.object3D.add(this.fluid.mesh);
+  }
+
+  private disposeFluid(): void {
+    if (!this.fluid) return;
+    this.object3D.remove(this.fluid.mesh);
+    this.fluid.dispose();
+    this.fluid = null;
+  }
+
+  private applyTransform(): void {
+    this.object3D.position.set(this.params.worldPosition[0], this.params.worldPosition[1], this.params.worldPosition[2]);
+  }
+
+  private reallocateCompatibilityParticles(): void {
+    const profile = QUALITY[this.params.quality];
+    this.maxParticles = Math.max(16, Math.min(profile.maxParticles, Math.ceil(this.params.spawnRate * this.params.lifetime * 1.15)));
     this.positions = new Float32Array(this.maxParticles * 3);
     this.alphas = new Float32Array(this.maxParticles);
     this.sizes = new Float32Array(this.maxParticles);
@@ -238,69 +888,65 @@ export class ${className} implements VFXEffect<${className}Params> {
     this.geometry.setAttribute("aAlpha", new THREE.BufferAttribute(this.alphas, 1));
     this.geometry.setAttribute("aSize", new THREE.BufferAttribute(this.sizes, 1));
     this.geometry.setAttribute("aAngle", new THREE.BufferAttribute(this.angles, 1));
-    this.geometry.setDrawRange(0, 0);
+    if (this.particles.length > this.maxParticles) this.particles.length = this.maxParticles;
   }
 
-  private createParticle(): Particle {
-    const angle = this.random() * Math.PI * 2;
-    const disk = Math.sqrt(this.random()) * this.params.radius;
-    const jitter = (this.random() - 0.5) * 0.18;
-    const seed = this.params.seed + this.emitted * 37 + Math.floor(this.random() * 1000);
-    this.emitted += 1;
-    return {
-      age: 0,
-      angle: this.random() * Math.PI * 2,
-      baseSize: this.params.size * (0.72 + this.random() * 0.62),
-      lifetime: this.params.lifetime * (0.75 + this.random() * 0.5),
-      seed,
-      velocityX: Math.cos(angle) * jitter,
-      velocityY: this.params.riseSpeed * (0.82 + this.random() * 0.28),
-      velocityZ: Math.sin(angle) * jitter,
-      x: Math.cos(angle) * disk,
-      y: 0,
-      z: Math.sin(angle) * disk,
-    };
+  private spawnParticles(deltaSeconds: number): void {
+    this.spawnCarry += this.params.spawnRate * deltaSeconds;
+    const spawnCount = Math.floor(this.spawnCarry);
+    this.spawnCarry -= spawnCount;
+    for (let index = 0; index < spawnCount && this.particles.length < this.maxParticles; index += 1) {
+      const angle = Math.random() * Math.PI * 2;
+      const radial = Math.sqrt(Math.random()) * this.params.radius;
+      this.particles.push({
+        age: 0,
+        angle: Math.random() * Math.PI * 2,
+        baseSize: this.params.size * (0.7 + Math.random() * 0.8),
+        lifetime: this.params.lifetime * (0.74 + Math.random() * 0.4),
+        velocityX: Math.cos(angle) * radial * 0.18 + this.params.wind[0],
+        velocityY: this.params.riseSpeed * (0.58 + Math.random() * 0.44),
+        velocityZ: Math.sin(angle) * radial * 0.18 + this.params.wind[2],
+        x: Math.cos(angle) * radial,
+        y: 0,
+        z: Math.sin(angle) * radial,
+      });
+    }
   }
 
-  private integrate(deltaSeconds: number, elapsedSeconds: number): void {
-    const [windX, windY, windZ] = this.params.wind;
-    this.particles = this.particles.filter((particle) => {
+  private integrateParticles(deltaSeconds: number): void {
+    const next: SmokeParticle[] = [];
+    for (const particle of this.particles) {
       particle.age += deltaSeconds;
-      const ageRatio = particle.age / Math.max(0.001, particle.lifetime);
-      if (ageRatio >= 1 || particle.y > this.params.height * 1.18) return false;
-      const phase = particle.seed * 0.017 + elapsedSeconds * 0.75 + particle.y * 1.6;
-      const curl = this.params.curlStrength * (1 - ageRatio * 0.45);
-      const wander = this.params.turbulence * (0.35 + ageRatio);
-      particle.velocityX += Math.sin(phase) * curl * deltaSeconds;
-      particle.velocityZ += Math.cos(phase * 0.83) * curl * deltaSeconds;
-      particle.x += (particle.velocityX + windX * wander) * deltaSeconds;
-      particle.y += (particle.velocityY + windY + this.params.riseSpeed * 0.18 * (1 - ageRatio)) * deltaSeconds;
-      particle.z += (particle.velocityZ + windZ * wander) * deltaSeconds;
-      particle.angle += (0.16 + this.params.curlStrength * 0.2) * deltaSeconds;
-      return true;
-    });
+      if (particle.age >= particle.lifetime) continue;
+      const t = particle.age / Math.max(0.001, particle.lifetime);
+      const swirl = Math.sin(t * Math.PI * 5 + particle.angle) * this.params.curlStrength * 0.18;
+      particle.velocityY += this.params.buoyantLift * deltaSeconds * 0.34;
+      particle.x += (particle.velocityX + swirl) * deltaSeconds;
+      particle.y += particle.velocityY * deltaSeconds;
+      particle.z += (particle.velocityZ - swirl * 0.6) * deltaSeconds;
+      next.push(particle);
+    }
+    this.particles = next;
   }
 
-  private writeGeometry(): void {
+  private writeCompatGeometry(): void {
     let count = 0;
     for (const particle of this.particles) {
-      const ageRatio = clamp(particle.age / Math.max(0.001, particle.lifetime), 0, 1);
-      const plumeFade = 1 - smoothstep(0.82, 1, particle.y / Math.max(0.01, this.params.height));
-      const lifeFade = Math.sin(Math.PI * ageRatio) * Math.pow(1 - ageRatio, this.params.dissipation);
+      if (count >= this.maxParticles) break;
+      const t = particle.age / Math.max(0.001, particle.lifetime);
       this.positions[count * 3] = particle.x;
       this.positions[count * 3 + 1] = particle.y;
       this.positions[count * 3 + 2] = particle.z;
-      this.alphas[count] = clamp(this.params.density * lifeFade * plumeFade, 0, 1);
-      this.sizes[count] = particle.baseSize * (0.42 + ageRatio * 1.65);
-      this.angles[count] = particle.angle;
+      this.alphas[count] = (1 - t) * this.params.opacity * 0.45;
+      this.sizes[count] = particle.baseSize * (0.6 + t * 1.8);
+      this.angles[count] = particle.angle + t * 2.2;
       count += 1;
     }
     this.geometry.setDrawRange(0, count);
-    this.geometry.attributes.position.needsUpdate = true;
-    this.geometry.attributes.aAlpha.needsUpdate = true;
-    this.geometry.attributes.aSize.needsUpdate = true;
-    this.geometry.attributes.aAngle.needsUpdate = true;
-    this.geometry.computeBoundingSphere();
+    for (const name of ["position", "aAlpha", "aSize", "aAngle"]) {
+      const attribute = this.geometry.getAttribute(name) as THREE.BufferAttribute | undefined;
+      if (attribute) attribute.needsUpdate = true;
+    }
   }
 }
 `;
@@ -311,13 +957,30 @@ export function createUsageSnippet(className: string): string {
 
 const smoke = new ${className}({
   renderer,
+  backendMode: "auto",
   quality: "high",
+  gridResolution: "high",
   worldPosition: [0, 0, 0],
-  spawnRate: 96,
-  lifetime: 2.4,
-  turbulence: 0.35,
-  density: 0.8,
-  color: "#b9c7cf"
+  spawnRate: 118,
+  lifetime: 3.8,
+  radius: 0.32,
+  height: 5.1,
+  turbulence: 0.38,
+  density: 1.04,
+  baseDensity: 1.12,
+  pressureIterations: 18,
+  diffusion: 0.018,
+  sourceTemperature: 1.28,
+  emissionColor: "#ff7a2f",
+  emissionIntensity: 1.1,
+  absorption: 1.35,
+  scattering: 0.68,
+  detailScale: 3.6,
+  detailStrength: 0.46,
+  detailSpeed: 0.28,
+  renderStepScale: 0.42,
+  shadowQuality: 8,
+  color: "#c6cfd2"
 });
 
 scene.add(smoke.object3D);
@@ -333,7 +996,7 @@ export function createReadmeSnippet(ir: EffectIR, className: string): string {
 
 Generated by ThreeFX Studio from graph \`${ir.graphHash}\`.
 
-This export contains a standalone typed Three.js effect class. It does not depend on React, the builder app, or ThreeFX Studio packages.
+This export contains a standalone typed Three.js smoke effect class. The primary path is a WebGPU Eulerian fluid grid solver using TSL compute and a raymarched volume renderer. The compatibility backend is a simpler particle preview for non-WebGPU renderers.
 
 \`\`\`ts
 ${createUsageSnippet(className).trim()}
@@ -354,6 +1017,7 @@ export function createManifestSource(ir: EffectIR, className: string): string {
     effectType: ir.effectType,
     graphHash: ir.graphHash,
     generatedBy: "ThreeFX Studio",
+    runtimeSolver: ir.runtime.solver,
     schemaVersion: ir.schemaVersion,
   })}\n`;
 }

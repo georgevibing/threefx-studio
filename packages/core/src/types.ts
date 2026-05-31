@@ -38,6 +38,9 @@ export type ParameterType =
 
 export type QualityPreset = "low" | "medium" | "high" | "cinematic";
 
+export type WispySmokeBackendMode = "auto" | "webgpu" | "compat";
+export type WispySmokeGridResolution = "low" | "medium" | "high" | "cinematic";
+
 export interface ParameterMetadata {
   readonly id: string;
   readonly label: string;
@@ -179,6 +182,14 @@ export interface EffectIR {
   readonly effectType: "wispy-smoke";
   readonly effectName: string;
   readonly graphHash: string;
+  readonly runtime: {
+    readonly backendMode: WispySmokeBackendMode;
+    readonly fallback: "compat";
+    readonly gridResolution: WispySmokeGridResolution;
+    readonly quality: QualityPreset;
+    readonly renderModel: "volume-raymarch";
+    readonly solver: "eulerian-fluid-grid";
+  };
   readonly parameters: readonly ParameterMetadata[];
   readonly parameterValues: ParameterMap;
   readonly nodes: readonly EffectIRNode[];

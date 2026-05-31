@@ -26,7 +26,7 @@ Open the Vite URL printed by pnpm. The builder app lives in `apps/builder`.
 
 The default graph is the Wispy Smoke preset. It is built from generic fluid nodes: sphere or box emitters, curl/fBm fields, buoyancy/wind/vortex forces, optional sphere or box obstacles, a 3D fluid solver, a volume renderer, source glow, and debug view. Use the node palette or right-click the canvas to add nodes. Drag between compatible ports to connect nodes. Drag from a port into empty canvas space to open a filtered node menu. Use the Auto layout toolbar button to rearrange nodes into ranked, non-overlapping lanes. Node configuration lives in grouped parameter panels on each node. Unlinked value inputs can be edited inline; linked value inputs show the upstream source button instead. Reusable primitive parameter nodes such as `parameter.float`, `parameter.color`, and `parameter.quality` carry custom labels and values when you want a value to drive one or more inputs. The right rail is reserved for preview, graph diagnostics, and export.
 
-Parameter changes update the preview live with a short debounce to keep heavy WebGPU preview updates responsive while dragging values. While hovering the preview, middle-drag orbits, `Shift` + middle-drag pans, and the scroll wheel zooms within clamped limits. On macOS, `Option` + left-drag orbits, `Option` + `Cmd` + left-drag pans, and `Option` + `Control` + left-drag zooms. Use the preview maximize button for a larger modal view; `Esc` restores it. The editor autosaves graph progress, node positions, and viewport state through browser local storage; toolbar save/load still uses the same local workspace, and graph JSON can also be imported or downloaded.
+Parameter changes update the preview live with a short debounce to keep heavy WebGPU preview updates responsive while dragging values. While hovering the preview, middle-drag orbits, `Shift` + middle-drag pans, and the scroll wheel zooms within clamped limits. On macOS, `Option` + left-drag orbits, `Option` + `Cmd` + left-drag pans, and `Option` + `Control` + left-drag zooms. Use the preview maximize button for a larger modal view; `Esc` restores it. The editor starts from the current clean preset; toolbar save/load uses browser local storage explicitly, and graph JSON can also be imported or downloaded.
 
 ## Port Types
 
@@ -54,28 +54,28 @@ const smoke = new WispySmokeVFX({
   quality: "high",
   gridResolution: "high",
   worldPosition: [0, 0, 0],
-  spawnRate: 1200,
+  spawnRate: 560,
   lifetime: 4.5,
-  radius: 0.38,
+  radius: 0.28,
   height: 6,
-  density: 0.85,
-  riseSpeed: 1.8,
-  buoyantLift: 2.2,
-  turbulence: 1.65,
-  curlStrength: 1.4,
-  vorticityConfinement: 0.85,
-  wind: [0.1, 0.3, 0.05],
-  pressureIterations: 12,
-  diffusion: 0.01,
-  diffusionIterations: 1,
+  density: 0.62,
+  riseSpeed: 1.65,
+  buoyantLift: 1.9,
+  turbulence: 2.35,
+  curlStrength: 2.6,
+  vorticityConfinement: 1.8,
+  wind: [0.08, 0.22, 0.03],
+  pressureIterations: 10,
+  diffusion: 0,
+  diffusionIterations: 0,
   advectionMode: "trilinear",
-  sourceTemperature: 1.1,
+  sourceTemperature: 0.75,
   emissionColor: "#d7e7ef",
-  emissionIntensity: 0.35,
-  absorption: 6,
-  scattering: 2.2,
-  detailScale: 22,
-  detailStrength: 3.5,
+  emissionIntensity: 0.12,
+  absorption: 4.2,
+  scattering: 1.25,
+  detailScale: 19,
+  detailStrength: 3.2,
   detailSpeed: 0.65,
   detailOctaves: 4,
   sourceGlowEnabled: false,
@@ -83,9 +83,9 @@ const smoke = new WispySmokeVFX({
   sourceGlowIntensity: 0.35,
   renderStepScale: 1.25,
   shadowQuality: 12,
-  shadowStrength: 1.25,
+  shadowStrength: 1.2,
   debugView: "final",
-  color: "#c7d2d8",
+  color: "#aebbc3",
 });
 
 scene.add(smoke.object3D);

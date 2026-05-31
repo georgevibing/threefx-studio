@@ -208,15 +208,12 @@ const AUTO_LAYOUT_KIND_ORDER: Record<string, number> = {
   quality: 9,
   parameter: 10,
 };
-const PREVIEW_WEBGPU_PIXEL_RATIO_CAP = 0.66;
+const PREVIEW_WEBGPU_PIXEL_RATIO_CAP = 1;
 const PREVIEW_WEBGL_PIXEL_RATIO_CAP = 2;
 const PREVIEW_UPDATE_DEBOUNCE_MS = 140;
-const AUTOSAVE_DEBOUNCE_MS = 400;
 const DEFAULT_FLOW_VIEWPORT: Viewport = { x: 120, y: 80, zoom: 0.82 };
 
 function loadInitialGraph(): GraphDocument {
-  // Boot the current preset first; persisted editor state hydrates after mount
-  // through the persistence adapter so the storage backend can later be async.
   return createWispySmokeGraph();
 }
 
@@ -1032,7 +1029,6 @@ function App() {
   const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null);
   const [isMiddlePanning, setIsMiddlePanning] = useState(false);
   const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
-  const [isPersistenceHydrated, setIsPersistenceHydrated] = useState(false);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [canvasBounds, setCanvasBounds] = useState<DOMRect | null>(null);
   const [selectionDrag, setSelectionDragState] = useState<SelectionDragState | null>(null);
@@ -1090,41 +1086,6 @@ function App() {
     setQuickAdd(null);
     setNodeMenu(null);
   }, []);
-
-  useEffect(() => {
-    let active = true;
-    void editorPersistence.load().then((result) => {
-      if (!active) {
-        return;
-      }
-      if (result.status === "loaded") {
-        setGraph(result.state.graph);
-        setSelectedNodeIds(new Set());
-        setSelectedEdgeIds(new Set());
-        setStatus(result.valid ? "Restored local workspace" : "Restored workspace with warnings");
-        void setViewport(viewportForGraph(result.state.graph));
-      } else if (result.status === "error") {
-        setStatus(`Local workspace ignored: ${result.message}`);
-      }
-      setIsPersistenceHydrated(true);
-    });
-    return () => {
-      active = false;
-    };
-  }, [setViewport]);
-
-  useEffect(() => {
-    if (!isPersistenceHydrated) {
-      return;
-    }
-    const timeout = window.setTimeout(() => {
-      void editorPersistence.save({ graph }).catch((error) => {
-        console.error(error);
-        setStatus("Autosave failed");
-      });
-    }, AUTOSAVE_DEBOUNCE_MS);
-    return () => window.clearTimeout(timeout);
-  }, [graph, isPersistenceHydrated]);
 
   const commitGraphChange = useCallback(
     (
@@ -3853,7 +3814,7 @@ const PREVIEW_PITCH_EPSILON = 0.01;
 const PREVIEW_CAMERA_NAVIGATION_RATE = 18;
 
 function createPreviewCameraState(camera: THREE.PerspectiveCamera): PreviewCameraState {
-  const target = new THREE.Vector3(0, 2.55, 0);
+  const target = new THREE.Vector3(0, 1.8, 0);
   const spherical = new THREE.Spherical().setFromVector3(
     new THREE.Vector3().subVectors(camera.position, target),
   );
@@ -4091,8 +4052,8 @@ function PreviewViewport({
 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(PREVIEW_CAMERA_FOV, 1, 0.1, 80);
-      camera.position.set(0, 2.7, 4.75);
-      camera.lookAt(0, 2.55, 0);
+      camera.position.set(0, 2.25, 4.75);
+      camera.lookAt(0, 1.8, 0);
       const cameraDesiredState = createPreviewCameraState(camera);
       const cameraRenderedState = clonePreviewCameraState(cameraDesiredState);
       cameraRef.current = camera;

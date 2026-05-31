@@ -33,15 +33,15 @@ describe("WispySmokeVFX", () => {
     expect(params.backendMode).toBe("auto");
     expect(params.gridResolution).toBe("high");
     expect(params.baseDensity).toBeGreaterThan(0);
-    expect(params.color).toBe("#c7d2d8");
+    expect(params.color).toBe("#aebbc3");
     expect(params.emissionColor).toBe("#d7e7ef");
     expect(params.sourceGlowEnabled).toBe(false);
     expect(params.sourceGlowColor).toBe("#c7d2d8");
-    expect(params.pressureIterations).toBe(12);
-    expect(params.diffusionIterations).toBe(1);
+    expect(params.pressureIterations).toBe(10);
+    expect(params.diffusionIterations).toBe(0);
     expect(params.advectionMode).toBe("trilinear");
     expect(params.debugView).toBe("final");
-    expect(params.diffusion).toBeGreaterThan(0);
+    expect(params.diffusion).toBe(0);
     expect(params.absorption).toBeGreaterThan(0);
     expect(params.scattering).toBeGreaterThan(0);
     expect(params.detailScale).toBeGreaterThan(0);
@@ -67,15 +67,15 @@ describe("WispySmokeVFX", () => {
     expect(stats.fallbackActive).toBe(false);
     expect(stats.gridResolution).toEqual([32, 32, 32]);
     expect(stats.gridCells).toBe(32 * 32 * 32);
-    expect(stats.pressureIterations).toBe(12);
-    expect(stats.solverPasses).toBe(24);
+    expect(stats.pressureIterations).toBe(10);
+    expect(stats.solverPasses).toBe(21);
     expect(stats.simulationMs).toBeGreaterThanOrEqual(0);
     expect(stats.renderSteps).toBeGreaterThanOrEqual(16);
     expect(stats.advectionMode).toBe("trilinear");
-    expect(stats.diffusionIterations).toBe(1);
+    expect(stats.diffusionIterations).toBe(0);
     expect(stats.emitterCount).toBe(1);
     expect(stats.fieldCount).toBe(1);
-    expect(stats.forceCount).toBe(1);
+    expect(stats.forceCount).toBe(2);
     expect(stats.obstacleCount).toBe(0);
     expect(stats.activeDebugView).toBe("final");
     const volume = smoke.object3D.children.find(
@@ -163,7 +163,7 @@ describe("WispySmokeVFX", () => {
     smoke.update(1 / 60, 2);
 
     expect(smoke.getStats().pressureIterations).toBe(24);
-    expect(smoke.getStats().solverPasses).toBe(36);
+    expect(smoke.getStats().solverPasses).toBe(35);
     expect(smoke.getParams().emissionColor).toBe("#ff4a1c");
     expect(smoke.getParams().sourceGlowColor).toBe("#ff8800");
     expect(smoke.getStats().fallbackActive).toBe(false);

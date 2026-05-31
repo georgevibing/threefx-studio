@@ -3806,7 +3806,7 @@ type PreviewCameraState = {
 
 const PREVIEW_CAMERA_FOV = 42;
 const PREVIEW_CAMERA_MIN_DISTANCE = 1.35;
-const PREVIEW_CAMERA_MAX_DISTANCE = 8.5;
+const PREVIEW_CAMERA_MAX_DISTANCE = 11;
 const PREVIEW_POINTER_ORBIT_SPEED = 0.012;
 const PREVIEW_POINTER_ZOOM_SPEED = 0.01;
 const PREVIEW_WHEEL_ZOOM_SPEED = 0.001;
@@ -3814,7 +3814,7 @@ const PREVIEW_PITCH_EPSILON = 0.01;
 const PREVIEW_CAMERA_NAVIGATION_RATE = 18;
 
 function createPreviewCameraState(camera: THREE.PerspectiveCamera): PreviewCameraState {
-  const target = new THREE.Vector3(0, 1.8, 0);
+  const target = new THREE.Vector3(0, 2.45, 0);
   const spherical = new THREE.Spherical().setFromVector3(
     new THREE.Vector3().subVectors(camera.position, target),
   );
@@ -4052,8 +4052,8 @@ function PreviewViewport({
 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(PREVIEW_CAMERA_FOV, 1, 0.1, 80);
-      camera.position.set(0, 2.25, 4.75);
-      camera.lookAt(0, 1.8, 0);
+      camera.position.set(0, 2.55, 7.2);
+      camera.lookAt(0, 2.45, 0);
       const cameraDesiredState = createPreviewCameraState(camera);
       const cameraRenderedState = clonePreviewCameraState(cameraDesiredState);
       cameraRef.current = camera;

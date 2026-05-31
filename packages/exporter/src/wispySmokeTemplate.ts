@@ -320,8 +320,8 @@ interface SmokeParticle {
 const RUNTIME_SOLVER = "eulerian-fluid-grid";
 const DEFAULT_PARAMS: ${className}Params = ${paramsLiteral(ir.parameterValues)} as ${className}Params;
 const DEFAULT_RUNTIME_CONFIG: WispySmokeRuntimeConfig = ${runtimeConfigLiteral(ir)} as WispySmokeRuntimeConfig;
-const SOURCE_DENSITY_RATE_SCALE = 0.08;
-const SOURCE_VELOCITY_INJECTION_SCALE = 4.0;
+const SOURCE_DENSITY_RATE_SCALE = 0.07;
+const SOURCE_VELOCITY_INJECTION_SCALE = 2.6;
 
 const QUALITY: Record<WispySmokeQuality, { maxParticles: number; maxRaySteps: number; volumeGrid: Vec3 }> = {
   low: { maxParticles: 64, maxRaySteps: 48, volumeGrid: [32, 32, 32] },
@@ -581,9 +581,10 @@ function normalizeRuntimeConfig(params: ${className}Params, config: Partial<Wisp
 }
 
 function resolveFluidBounds(params: ${className}Params): VolumeBounds {
-  const windSpread = Math.hypot(params.wind[0], params.wind[2]) * params.lifetime * 0.42;
-  const sourceSpread = params.radius * 4 + params.size * 1.65 + params.turbulence * 0.42 + windSpread;
-  const width = Math.max(1.4, sourceSpread, params.height * 0.38);
+  const windSpread = Math.hypot(params.wind[0], params.wind[2]) * params.lifetime * 0.32;
+  const sourceSpread = params.radius * 6.5 + params.turbulence * 0.18 + windSpread;
+  const authoredSize = params.size * 1.08;
+  const width = Math.max(1.55, sourceSpread, authoredSize, params.height * 0.32);
   return { depth: width, height: Math.max(0.75, params.height), width };
 }
 
@@ -879,7 +880,7 @@ class FluidGrid3D {
       const currentVelocity = readVelocity.element(instanceIndex);
       const densityDelta = mask.mul(this.uniforms.sourceRate).mul(this.uniforms.dt);
       const temperature = currentDensity.y.max(mask.mul(this.uniforms.sourceTemperature).mul(thermalPulse).clamp(0, 1));
-      const sourceVelocity = this.uniforms.sourceVelocity.add(vec3(0, this.uniforms.riseSpeed.mul(1.4), 0));
+      const sourceVelocity = this.uniforms.sourceVelocity.add(vec3(0, this.uniforms.riseSpeed.mul(0.35), 0));
       const velocityDelta = sourceVelocity.mul(mask).mul(this.uniforms.dt).mul(SOURCE_VELOCITY_INJECTION_SCALE);
       writeDensity.element(instanceIndex).assign(vec4(currentDensity.x.add(densityDelta).clamp(0, 1), temperature.clamp(0, 1), currentDensity.z, currentDensity.w));
       writeVelocity.element(instanceIndex).assign(vec4(currentVelocity.xyz.add(velocityDelta), 0));
@@ -895,7 +896,8 @@ class FluidGrid3D {
       const advectedVelocity = sourceVelocity.element(this.linearIndex(backCoord.x, backCoord.y, backCoord.z));
       const neighborDensity = this.neighborDensityAverage(sourceDensity, coord);
       const densityValue = advectedDensity.x.mul(1 - this.uniforms.densityDissipation.mul(this.uniforms.dt)).mix(neighborDensity, this.uniforms.diffusion).clamp(0, 1);
-      const temperatureValue = advectedDensity.y.mul(1 - this.uniforms.densityDissipation.mul(this.uniforms.dt).mul(0.72)).clamp(0, 1);
+      const temperatureCooling = this.uniforms.densityDissipation.mul(3.2).add(0.18).mul(this.uniforms.dt);
+      const temperatureValue = advectedDensity.y.mul(float(1).sub(temperatureCooling).clamp(0, 1)).clamp(0, 1);
       targetDensity.element(instanceIndex).assign(vec4(densityValue, temperatureValue, advectedDensity.z, advectedDensity.w));
       targetVelocity.element(instanceIndex).assign(vec4(advectedVelocity.xyz.mul(1 - this.uniforms.velocityDissipation.mul(this.uniforms.dt)), 0));
     })().compute(this.cells).setName("${className} Semi Lagrangian Advection") as object;
@@ -1306,12 +1308,14 @@ const smoke = new ${className}({
   radius: 0.28,
   height: 6,
   density: 0.62,
-  riseSpeed: 1.65,
-  buoyantLift: 1.9,
+  baseDensity: 0.82,
+  opacity: 0.68,
+  riseSpeed: 0.92,
+  buoyantLift: 1.45,
   turbulence: 2.35,
   curlStrength: 2.6,
   vorticityConfinement: 1.8,
-  wind: [0.08, 0.22, 0.03],
+  wind: [0.08, 0.06, 0.03],
   pressureIterations: 10,
   diffusion: 0,
   diffusionIterations: 0,
@@ -1319,8 +1323,8 @@ const smoke = new ${className}({
   sourceTemperature: 0.75,
   emissionColor: "#d7e7ef",
   emissionIntensity: 0.12,
-  absorption: 4.2,
-  scattering: 1.25,
+  absorption: 3.1,
+  scattering: 1.45,
   detailScale: 19,
   detailStrength: 3.2,
   detailSpeed: 0.65,

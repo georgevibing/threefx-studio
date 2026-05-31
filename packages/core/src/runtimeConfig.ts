@@ -143,7 +143,7 @@ export function createWispySmokeRuntimeConfig(
         shape: "sphere",
         spawnRate: numberValue(values, "spawnRate", 560),
         temperature: numberValue(values, "sourceTemperature", 0.75),
-        velocity: vec3Value(values, "sourceVelocity", [0.03, 0.45, 0]),
+        velocity: vec3Value(values, "sourceVelocity", [0.02, 0.12, 0]),
       },
     ],
     fields: [
@@ -160,21 +160,21 @@ export function createWispySmokeRuntimeConfig(
     ],
     forces: [
       {
-        buoyantLift: numberValue(values, "buoyantLift", 1.9),
+        buoyantLift: numberValue(values, "buoyantLift", 1.45),
         id: "buoyancy",
         position: [0, 0, 0],
         radius: 1,
-        riseSpeed: numberValue(values, "riseSpeed", 1.65),
+        riseSpeed: numberValue(values, "riseSpeed", 0.92),
         strength: 1,
         type: "buoyancy",
-        wind: vec3Value(values, "wind", [0.08, 0.22, 0.03]),
+        wind: vec3Value(values, "wind", [0.08, 0.06, 0.03]),
       },
       {
-        buoyantLift: numberValue(values, "buoyantLift", 1.9),
+        buoyantLift: numberValue(values, "buoyantLift", 1.45),
         id: "vortex",
         position: vec3Value(values, "vortexPosition", [0, 0.42, 0]),
         radius: numberValue(values, "vortexRadius", 1.15),
-        riseSpeed: numberValue(values, "riseSpeed", 1.65),
+        riseSpeed: numberValue(values, "riseSpeed", 0.92),
         strength: numberValue(values, "vortexStrength", 0.8),
         type: "vortex",
         wind: [0, 0, 0],
@@ -182,18 +182,18 @@ export function createWispySmokeRuntimeConfig(
     ],
     obstacles: [],
     render: {
-      absorption: numberValue(values, "absorption", 4.2),
-      baseDensity: numberValue(values, "baseDensity", 1.25),
+      absorption: numberValue(values, "absorption", 3.1),
+      baseDensity: numberValue(values, "baseDensity", 0.82),
       blendMode,
       detailOctaves: Math.max(1, Math.min(5, intValue(values, "detailOctaves", 4))),
       detailScale: numberValue(values, "detailScale", 19),
       detailSpeed: numberValue(values, "detailSpeed", 0.65),
       detailStrength: numberValue(values, "detailStrength", 3.2),
-      opacity: numberValue(values, "opacity", 0.82),
+      opacity: numberValue(values, "opacity", 0.68),
       opacityRamp,
-      plumeTaper: numberValue(values, "plumeTaper", 0.86),
+      plumeTaper: numberValue(values, "plumeTaper", 1.05),
       renderStepScale: numberValue(values, "renderStepScale", 1.25),
-      scattering: numberValue(values, "scattering", 1.25),
+      scattering: numberValue(values, "scattering", 1.45),
       shadowQuality: intValue(values, "shadowQuality", 12),
       shadowStrength: numberValue(values, "shadowStrength", 1.2),
       smokeColor: colorValue(values, "color", "#aebbc3"),
@@ -254,7 +254,7 @@ export function compileWispySmokeRuntimeConfig(
         shape: node.type === "emitter.box" ? "box" : "sphere",
         spawnRate: numberValue(values, "spawnRate", 560),
         temperature: numberValue(values, "sourceTemperature", 0.75),
-        velocity: vec3Value(values, "sourceVelocity", [0.03, 0.45, 0]),
+        velocity: vec3Value(values, "sourceVelocity", [0.02, 0.12, 0]),
       } as const;
     });
   const fields = nodes
@@ -278,14 +278,14 @@ export function compileWispySmokeRuntimeConfig(
       const values = valueMap({ ...parameterValues, ...resolveNodeInputValues(graph, node, registry) });
       const type = node.type === "force.vortex" ? "vortex" : node.type === "force.wind" ? "wind" : "buoyancy";
       return {
-        buoyantLift: numberValue(values, "buoyantLift", 1.9),
+        buoyantLift: numberValue(values, "buoyantLift", 1.45),
         id: node.id,
         position: vec3Value(values, "vortexPosition", [0, 0.42, 0]),
         radius: numberValue(values, "vortexRadius", 1.15),
-        riseSpeed: numberValue(values, "riseSpeed", 1.65),
+        riseSpeed: numberValue(values, "riseSpeed", 0.92),
         strength: type === "vortex" ? numberValue(values, "vortexStrength", 0.8) : 1,
         type,
-        wind: vec3Value(values, "wind", [0.08, 0.22, 0.03]),
+        wind: vec3Value(values, "wind", [0.08, 0.06, 0.03]),
       } as const;
     });
   const obstacles = nodes

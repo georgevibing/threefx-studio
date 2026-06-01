@@ -36,7 +36,6 @@ import {
   PanelLeftOpen,
   Plus,
   Redo2,
-  RotateCcw,
   Save,
   Trash2,
   Undo2,
@@ -83,6 +82,13 @@ import {
   createLocalStorageEditorPersistence,
   createLocalStorageEditorPreference,
 } from "./editorPersistence";
+import {
+  createEditorPresetGraph,
+  EDITOR_PRESETS,
+  getEditorPreset,
+  type EditorPreset,
+  type EditorPresetId,
+} from "./editorPresets";
 
 type FlowNodeData = {
   readonly definition: NodeDefinition;
@@ -99,6 +105,7 @@ type FlowNode = Node<FlowNodeData, "threefxNode">;
 type FlowEdge = Edge;
 
 const FLOW_NODE_TYPES = { threefxNode: ThreeFXNode };
+const FLOW_PRO_OPTIONS = { hideAttribution: true };
 
 type FlowNodeMeasurement = {
   readonly height?: number;
@@ -250,7 +257,6 @@ const PREVIEW_WEBGPU_PIXEL_RATIO_CAP = 1;
 const PREVIEW_WEBGL_PIXEL_RATIO_CAP = 2;
 const PREVIEW_WEBGPU_INTERNAL_PIXEL_BUDGET = 1_150_000;
 const PREVIEW_WEBGL_INTERNAL_PIXEL_BUDGET = 2_000_000;
-const PREVIEW_UPDATE_DEBOUNCE_MS = 140;
 const DEFAULT_FLOW_VIEWPORT: Viewport = { x: 120, y: 80, zoom: 0.82 };
 
 function loadInitialGraph(): GraphDocument {
@@ -278,17 +284,6 @@ function viewportEquals(left: Viewport | undefined, right: Viewport): boolean {
     Math.abs(left.y - right.y) < 0.01 &&
     Math.abs(left.zoom - right.zoom) < 0.0001
   );
-}
-
-function useDebouncedValue<T>(value: T, delayMs: number): T {
-  const [debounced, setDebounced] = useState(value);
-
-  useEffect(() => {
-    const timeout = window.setTimeout(() => setDebounced(value), delayMs);
-    return () => window.clearTimeout(timeout);
-  }, [delayMs, value]);
-
-  return debounced;
 }
 
 function createUniqueNodeId(type: string, nodes: readonly GraphNode[]): string {
@@ -1140,6 +1135,8 @@ function App() {
   const [isMiddlePanning, setIsMiddlePanning] = useState(false);
   const [isNodePaletteVisible, setIsNodePaletteVisible] = useState(false);
   const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
+  const [isPresetDialogOpen, setIsPresetDialogOpen] = useState(false);
+  const [isEditorHydrating, setIsEditorHydrating] = useState(true);
   const [flowNodeMeasurements, setFlowNodeMeasurements] = useState<
     ReadonlyMap<string, FlowNodeMeasurement>
   >(() => new Map());
@@ -1151,7 +1148,7 @@ function App() {
     webgpuLabel: "Checking",
     webgpuSupported: false,
   });
-  const [status, setStatus] = useState("Ready");
+  const [status, setStatus] = useState("Loading saved graph");
   const [isApple] = useState(() => isApplePlatform());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canvasPanelRef = useRef<HTMLDivElement | null>(null);
@@ -1167,7 +1164,6 @@ function App() {
     useReactFlow<FlowNode, FlowEdge>();
   const canUndo = historyRevision >= 0 && undoStackRef.current.length > 0;
   const canRedo = historyRevision >= 0 && redoStackRef.current.length > 0;
-  const flowNodeTypes = useMemo(() => FLOW_NODE_TYPES, []);
 
   const setSelectionDrag = useCallback((next: SelectionDragState | null) => {
     selectionDragRef.current = next;
@@ -1201,6 +1197,52 @@ function App() {
     setStatus(snapshot.status);
     setQuickAdd(null);
     setNodeMenu(null);
+    setIsPresetDialogOpen(false);
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    void editorPersistence
+      .load()
+      .then((result) => {
+        if (disposed) {
+          return;
+        }
+        if (result.status === "missing") {
+          setStatus("Ready");
+          return;
+        }
+        if (result.status === "error") {
+          setStatus(`Local graph load failed: ${result.message}`);
+          return;
+        }
+        pendingMoveSnapshotRef.current = null;
+        undoStackRef.current = [];
+        redoStackRef.current = [];
+        setHistoryRevision((revision) => revision + 1);
+        setGraph(result.state.graph);
+        setSelectedNodeIds(new Set());
+        setSelectedEdgeIds(new Set());
+        setQuickAdd(null);
+        setNodeMenu(null);
+        setIsPresetDialogOpen(false);
+        setFlowNodeMeasurements(new Map());
+        setStatus(result.valid ? "Loaded saved graph" : "Loaded saved graph with validation errors");
+      })
+      .catch((error) => {
+        if (!disposed) {
+          console.error(error);
+          setStatus("Local graph load failed");
+        }
+      })
+      .finally(() => {
+        if (!disposed) {
+          setIsEditorHydrating(false);
+        }
+      });
+    return () => {
+      disposed = true;
+    };
   }, []);
 
   useEffect(() => {
@@ -1522,6 +1564,10 @@ function App() {
   );
 
   const saveLocal = useCallback(() => {
+    if (isEditorHydrating) {
+      setStatus("Loading saved graph");
+      return;
+    }
     void editorPersistence
       .save({ graph })
       .then(() => setStatus("Saved graph locally"))
@@ -1529,7 +1575,7 @@ function App() {
         console.error(error);
         setStatus("Save failed");
       });
-  }, [graph]);
+  }, [graph, isEditorHydrating]);
 
   const loadLocal = useCallback(() => {
     void editorPersistence.load().then((result) => {
@@ -1550,15 +1596,23 @@ function App() {
     });
   }, [commitGraphChange, setViewport]);
 
-  const resetPreset = useCallback(() => {
-    const preset = createWispySmokeGraph();
-    commitGraphChange(() => preset, {
-      nextSelectedEdgeIds: [],
-      nextSelectedNodeIds: [],
-      status: "Loaded Wispy Smoke preset",
-    });
-    void setViewport(viewportForGraph(preset));
-  }, [commitGraphChange, setViewport]);
+  const startFromPreset = useCallback(
+    (presetId: EditorPresetId) => {
+      const preset = getEditorPreset(presetId);
+      const nextGraph = createEditorPresetGraph(presetId);
+      commitGraphChange(() => nextGraph, {
+        nextSelectedEdgeIds: [],
+        nextSelectedNodeIds: [],
+        status: `Loaded ${preset.name} preset`,
+      });
+      setFlowNodeMeasurements(new Map());
+      setQuickAdd(null);
+      setNodeMenu(null);
+      setIsPresetDialogOpen(false);
+      void setViewport(viewportForGraph(nextGraph));
+    },
+    [commitGraphChange, setViewport],
+  );
 
   const downloadJson = useCallback(() => {
     const blob = new Blob([serializeGraphDocument(graph)], { type: "application/json" });
@@ -1839,6 +1893,9 @@ function App() {
       if (event.defaultPrevented || isEditableEventTarget(event.target)) {
         return;
       }
+      if (isEditorHydrating) {
+        return;
+      }
       const key = event.key.toLowerCase();
       const primary = isPrimaryModifierPressed(event, isApple);
       if (primary && key === "z" && !event.shiftKey) {
@@ -1869,6 +1926,11 @@ function App() {
         saveLocal();
         return;
       }
+      if (primary && key === "n") {
+        consumeShortcutEvent(event);
+        setIsPresetDialogOpen(true);
+        return;
+      }
       if (key === "f") {
         consumeShortcutEvent(event);
         focusSelection();
@@ -1885,6 +1947,7 @@ function App() {
         setQuickAdd(null);
         setNodeMenu(null);
         setIsShortcutDialogOpen(false);
+        setIsPresetDialogOpen(false);
         return;
       }
       if (event.key === "Delete" || event.key === "Backspace") {
@@ -1899,6 +1962,7 @@ function App() {
       duplicateSelected,
       focusSelection,
       isApple,
+      isEditorHydrating,
       redoEdit,
       saveLocal,
       selectAllNodes,
@@ -2145,7 +2209,10 @@ function App() {
     () => ({ params: previewParams, runtimeConfig: previewConfig }),
     [previewConfig, previewParams],
   );
-  const debouncedPreviewState = useDebouncedValue(previewState, PREVIEW_UPDATE_DEBOUNCE_MS);
+
+  if (isEditorHydrating) {
+    return <EditorLoadingShell status={status} />;
+  }
 
   return (
     <main className="app-shell" tabIndex={-1}>
@@ -2153,7 +2220,7 @@ function App() {
         status={status}
         onSave={saveLocal}
         onLoad={loadLocal}
-        onReset={resetPreset}
+        onNewProject={() => setIsPresetDialogOpen(true)}
         onDownloadJson={downloadJson}
         onImportClick={() => fileInputRef.current?.click()}
         onAutoLayout={autoLayoutGraph}
@@ -2202,7 +2269,7 @@ function App() {
             className="threefx-flow"
             nodes={flowNodes}
             edges={flowEdges}
-            nodeTypes={flowNodeTypes}
+            nodeTypes={FLOW_NODE_TYPES}
             defaultViewport={viewportForGraph(graph)}
             minZoom={0.24}
             maxZoom={1.8}
@@ -2227,7 +2294,7 @@ function App() {
             onNodesChange={handleNodesChange}
             onEdgesChange={handleEdgesChange}
             deleteKeyCode={null}
-            proOptions={{ hideAttribution: true }}
+            proOptions={FLOW_PRO_OPTIONS}
             nodesFocusable
             edgesFocusable
             autoPanOnNodeFocus
@@ -2270,8 +2337,8 @@ function App() {
         <aside className="right-rail">
           <PreviewViewport
             isApple={isApple}
-            params={debouncedPreviewState.params}
-            runtimeConfig={debouncedPreviewState.runtimeConfig}
+            params={previewState.params}
+            runtimeConfig={previewState.runtimeConfig}
             onTelemetry={setPreviewTelemetry}
           />
           <PerformancePanel telemetry={previewTelemetry} />
@@ -2289,6 +2356,33 @@ function App() {
         open={isShortcutDialogOpen}
         onClose={() => setIsShortcutDialogOpen(false)}
       />
+      <PresetDialog
+        currentGraphName={graph.name}
+        open={isPresetDialogOpen}
+        presets={EDITOR_PRESETS}
+        onClose={() => setIsPresetDialogOpen(false)}
+        onSelectPreset={startFromPreset}
+      />
+    </main>
+  );
+}
+
+function EditorLoadingShell({ status }: { readonly status: string }) {
+  return (
+    <main className="app-shell" tabIndex={-1}>
+      <header className="topbar">
+        <div className="brand">
+          <img className="brand-logo" src="/logo.png" alt="" aria-hidden="true" />
+          <div>
+            <h1>ThreeFX Studio</h1>
+            <span>{status}</span>
+          </div>
+        </div>
+      </header>
+      <section className="editor-loading" aria-live="polite">
+        <span className="editor-loading-indicator" aria-hidden="true" />
+        <span>Loading saved graph</span>
+      </section>
     </main>
   );
 }
@@ -2297,7 +2391,7 @@ function TopBar({
   status,
   onSave,
   onLoad,
-  onReset,
+  onNewProject,
   onDownloadJson,
   onImportClick,
   onAutoLayout,
@@ -2312,7 +2406,7 @@ function TopBar({
   readonly status: string;
   readonly onSave: () => void;
   readonly onLoad: () => void;
-  readonly onReset: () => void;
+  readonly onNewProject: () => void;
   readonly onDownloadJson: () => void;
   readonly onImportClick: () => void;
   readonly onAutoLayout: () => void;
@@ -2341,6 +2435,7 @@ function TopBar({
             isNodePaletteVisible ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />
           }
         />
+        <IconButton title="New from preset" onClick={onNewProject} icon={<Plus size={16} />} />
         <IconButton title="Save" onClick={onSave} icon={<Save size={16} />} />
         <IconButton title="Load" onClick={onLoad} icon={<FolderOpen size={16} />} />
         <IconButton title="Import" onClick={onImportClick} icon={<Upload size={16} />} />
@@ -2353,7 +2448,6 @@ function TopBar({
           onClick={onShowShortcuts}
           icon={<Keyboard size={16} />}
         />
-        <IconButton title="Reset preset" onClick={onReset} icon={<RotateCcw size={16} />} />
       </div>
     </header>
   );
@@ -2432,6 +2526,11 @@ function ShortcutDialog({
       action: "Save",
       description: "Store local graph",
       keys: [shortcutLabel(isApple, "Mod", "S")],
+    },
+    {
+      action: "New project",
+      description: "Choose a graph preset",
+      keys: [shortcutLabel(isApple, "Mod", "N")],
     },
     {
       action: "Shortcuts",
@@ -2540,6 +2639,81 @@ function ShortcutDialog({
                 ))}
               </div>
             </div>
+          ))}
+        </div>
+      </section>
+    </div>
+  );
+}
+
+function PresetDialog({
+  currentGraphName,
+  open,
+  presets,
+  onClose,
+  onSelectPreset,
+}: {
+  readonly currentGraphName: string;
+  readonly open: boolean;
+  readonly presets: readonly EditorPreset[];
+  readonly onClose: () => void;
+  readonly onSelectPreset: (presetId: EditorPresetId) => void;
+}) {
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key !== "Escape") {
+        return;
+      }
+      event.preventDefault();
+      event.stopPropagation();
+      onClose();
+    };
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => window.removeEventListener("keydown", handleKeyDown, true);
+  }, [onClose, open]);
+
+  if (!open) {
+    return null;
+  }
+
+  return (
+    <div className="preset-backdrop" role="presentation" onPointerDown={onClose}>
+      <section
+        className="preset-dialog"
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby="preset-dialog-title"
+        onPointerDown={(event) => event.stopPropagation()}
+      >
+        <div className="preset-dialog-header">
+          <div>
+            <h2 id="preset-dialog-title">New Project</h2>
+            <span>{currentGraphName}</span>
+          </div>
+          <button
+            type="button"
+            className="icon-button"
+            aria-label="Close presets"
+            onClick={onClose}
+          >
+            <X size={16} />
+          </button>
+        </div>
+        <div className="preset-grid">
+          {presets.map((preset) => (
+            <article key={preset.id} className="preset-card">
+              <div>
+                <h3>{preset.name}</h3>
+                <span>{preset.summary}</span>
+                <p>{preset.description}</p>
+              </div>
+              <button type="button" onClick={() => onSelectPreset(preset.id)}>
+                Start
+              </button>
+            </article>
           ))}
         </div>
       </section>

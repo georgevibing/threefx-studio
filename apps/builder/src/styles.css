@@ -81,6 +81,31 @@ button {
   outline: none;
 }
 
+.editor-loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 10px;
+  background: var(--canvas);
+  color: var(--muted-foreground);
+  font-size: 13px;
+}
+
+.editor-loading-indicator {
+  width: 16px;
+  height: 16px;
+  border: 2px solid var(--border);
+  border-top-color: var(--selection-blue);
+  border-radius: 50%;
+  animation: editor-loading-spin 0.8s linear infinite;
+}
+
+@keyframes editor-loading-spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
 .topbar {
   display: flex;
   align-items: center;
@@ -1274,7 +1299,8 @@ button {
   color: var(--warning);
 }
 
-.shortcut-backdrop {
+.shortcut-backdrop,
+.preset-backdrop {
   position: fixed;
   z-index: 60;
   inset: 0;
@@ -1284,7 +1310,8 @@ button {
   padding: 18px;
 }
 
-.shortcut-dialog {
+.shortcut-dialog,
+.preset-dialog {
   width: min(560px, calc(100vw - 36px));
   max-height: min(720px, calc(100vh - 36px));
   overflow: auto;
@@ -1294,7 +1321,12 @@ button {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.54);
 }
 
-.shortcut-dialog-header {
+.preset-dialog {
+  width: min(760px, calc(100vw - 36px));
+}
+
+.shortcut-dialog-header,
+.preset-dialog-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
@@ -1303,17 +1335,71 @@ button {
   padding: 12px;
 }
 
-.shortcut-dialog-header h2 {
+.shortcut-dialog-header h2,
+.preset-dialog-header h2 {
   margin: 0;
   font-size: 15px;
   line-height: 1.2;
 }
 
-.shortcut-dialog-header span {
+.shortcut-dialog-header span,
+.preset-dialog-header span {
   display: block;
   margin-top: 3px;
   color: var(--muted-foreground);
   font-size: 11px;
+}
+
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  padding: 10px;
+}
+
+.preset-card {
+  display: grid;
+  min-height: 172px;
+  align-content: space-between;
+  gap: 14px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--card);
+  padding: 12px;
+}
+
+.preset-card h3 {
+  margin: 0;
+  color: var(--foreground);
+  font-size: 14px;
+}
+
+.preset-card span {
+  display: block;
+  margin-top: 3px;
+  color: var(--selection-blue);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.preset-card p {
+  margin: 10px 0 0;
+  color: var(--muted-foreground);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.preset-card button {
+  height: 32px;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--secondary);
+  color: var(--foreground);
+  cursor: pointer;
+}
+
+.preset-card button:hover {
+  border-color: var(--ring);
 }
 
 .shortcut-list {
@@ -1472,6 +1558,10 @@ button {
     width: 100%;
     overflow-x: auto;
     padding-bottom: 2px;
+  }
+
+  .preset-grid {
+    grid-template-columns: 1fr;
   }
 
   .app-shell {

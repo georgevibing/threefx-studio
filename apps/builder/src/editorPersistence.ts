@@ -18,6 +18,11 @@ export interface EditorPersistence {
   save(state: PersistedEditorState): Promise<void>;
 }
 
+export interface EditorPersistenceStorage {
+  getItem(key: string): string | null;
+  setItem(key: string, value: string): void;
+}
+
 export type EditorPreferenceLoadResult<T> =
   | { readonly status: "missing" }
   | { readonly status: "loaded"; readonly value: T }
@@ -33,14 +38,17 @@ export interface EditorPreferencePersistence<T> {
   save(value: T): Promise<void>;
 }
 
-export function createLocalStorageEditorPersistence(key: string): EditorPersistence {
+export function createStorageEditorPersistence(
+  key: string,
+  storage: EditorPersistenceStorage,
+): EditorPersistence {
   return {
     async load() {
-      const source = window.localStorage.getItem(key);
-      if (!source) {
-        return { status: "missing" };
-      }
       try {
+        const source = storage.getItem(key);
+        if (!source) {
+          return { status: "missing" };
+        }
         const result = deserializeGraphDocument(source);
         return {
           status: "loaded",
@@ -55,9 +63,16 @@ export function createLocalStorageEditorPersistence(key: string): EditorPersiste
       }
     },
     async save(state) {
-      window.localStorage.setItem(key, serializeGraphDocument(state.graph));
+      storage.setItem(key, serializeGraphDocument(state.graph));
     },
   };
+}
+
+export function createLocalStorageEditorPersistence(key: string): EditorPersistence {
+  return createStorageEditorPersistence(key, {
+    getItem: (storageKey) => window.localStorage.getItem(storageKey),
+    setItem: (storageKey, value) => window.localStorage.setItem(storageKey, value),
+  });
 }
 
 export function createLocalStorageEditorPreference<T>(

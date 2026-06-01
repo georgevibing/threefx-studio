@@ -99,7 +99,7 @@ describe("@threefx/core", () => {
 
     const spawnRatePort = registry.get("emitter.sphere")?.ports.find((port) => port.id === "spawnRate");
     expect(spawnRatePort).toMatchObject({
-      defaultValue: 880,
+      defaultValue: 960,
       direction: "input",
       effectParameterId: "spawnRate",
       group: "Emission",
@@ -294,7 +294,7 @@ describe("@threefx/core", () => {
     expect(
       WISPY_SMOKE_PARAMETER_METADATA.find((parameter) => parameter.id === "renderStepScale")
         ?.defaultValue,
-    ).toBe(1.55);
+    ).toBe(1.7);
   });
 
   it("keeps runtime config fallbacks aligned with metadata defaults", () => {

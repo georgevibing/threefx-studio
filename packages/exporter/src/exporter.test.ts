@@ -67,7 +67,7 @@ describe("@threefx/exporter", () => {
     expect(exported.usageSnippet).toContain('gridResolution: "high"');
     expect(exported.usageSnippet).toContain('emissionColor: "#eef8fc"');
     expect(exported.usageSnippet).toContain("sourceGlowEnabled: false");
-    expect(exported.usageSnippet).toContain("renderStepScale: 1.55");
+    expect(exported.usageSnippet).toContain("renderStepScale: 1.7");
     expect(exported.usageSnippet).toContain("pressureIterations: 20");
     expect(exported.usageSnippet).toContain('debugView: "final"');
     expect(exported.usageSnippet).not.toContain("#ff8800");

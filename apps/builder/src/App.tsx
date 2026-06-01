@@ -100,6 +100,15 @@ type FlowEdge = Edge;
 
 const FLOW_NODE_TYPES = { threefxNode: ThreeFXNode };
 
+type FlowNodeMeasurement = {
+  readonly height?: number;
+  readonly measured?: {
+    readonly height?: number;
+    readonly width?: number;
+  };
+  readonly width?: number;
+};
+
 type PreviewPerformanceStats = WispySmokeVFXStats & {
   readonly fps: number;
   readonly frameMs: number;
@@ -334,6 +343,7 @@ function resolveNodeInputBindings(graph: GraphDocument, node: GraphNode): NodeIn
 function graphToFlowNodes(
   graph: GraphDocument,
   selectedNodeIds: ReadonlySet<string>,
+  nodeMeasurements: ReadonlyMap<string, FlowNodeMeasurement>,
   onNodeParameterChange: (nodeId: string, id: string, value: ParameterValue) => void,
   onNodeLabelChange: (nodeId: string, label: string) => void,
   onFocusNode: (nodeId: string) => void,
@@ -344,12 +354,14 @@ function graphToFlowNodes(
     if (!definition) {
       return [];
     }
+    const measurement = nodeMeasurements.get(node.id);
     return [
       {
         id: node.id,
         type: "threefxNode",
         position: { x: node.position[0], y: node.position[1] },
         selected: selectedNodeIds.has(node.id),
+        ...(measurement ?? {}),
         data: {
           definition,
           connectedPorts: connected.get(node.id) ?? new Set<string>(),
@@ -998,6 +1010,19 @@ function nodeSelectionChanges(changes: readonly NodeChange<FlowNode>[]) {
   );
 }
 
+function nodeDimensionChanges(changes: readonly NodeChange<FlowNode>[]) {
+  return changes.filter(
+    (
+      change,
+    ): change is NodeChange<FlowNode> & {
+      readonly dimensions: { readonly height: number; readonly width: number };
+      readonly id: string;
+      readonly setAttributes?: boolean | "width" | "height";
+      readonly type: "dimensions";
+    } => change.type === "dimensions" && "dimensions" in change && Boolean(change.dimensions),
+  );
+}
+
 function edgeSelectionChanges(changes: readonly EdgeChange<FlowEdge>[]) {
   return changes.filter(
     (
@@ -1020,6 +1045,18 @@ function areStringSetsEqual(first: ReadonlySet<string>, second: ReadonlySet<stri
     }
   }
   return true;
+}
+
+function flowNodeMeasurementEquals(
+  first: FlowNodeMeasurement | undefined,
+  second: FlowNodeMeasurement,
+): boolean {
+  return (
+    first?.measured?.width === second.measured?.width &&
+    first?.measured?.height === second.measured?.height &&
+    first?.width === second.width &&
+    first?.height === second.height
+  );
 }
 
 function clientRectFromPoints(
@@ -1103,6 +1140,9 @@ function App() {
   const [isMiddlePanning, setIsMiddlePanning] = useState(false);
   const [isNodePaletteVisible, setIsNodePaletteVisible] = useState(false);
   const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
+  const [flowNodeMeasurements, setFlowNodeMeasurements] = useState<
+    ReadonlyMap<string, FlowNodeMeasurement>
+  >(() => new Map());
   const [historyRevision, setHistoryRevision] = useState(0);
   const [canvasBounds, setCanvasBounds] = useState<DOMRect | null>(null);
   const [selectionDrag, setSelectionDragState] = useState<SelectionDragState | null>(null);
@@ -1462,11 +1502,19 @@ function App() {
       graphToFlowNodes(
         graph,
         selectedNodeIds,
+        flowNodeMeasurements,
         updateNodeParameter,
         updateNodeLabel,
         focusGraphNode,
       ),
-    [focusGraphNode, graph, selectedNodeIds, updateNodeLabel, updateNodeParameter],
+    [
+      flowNodeMeasurements,
+      focusGraphNode,
+      graph,
+      selectedNodeIds,
+      updateNodeLabel,
+      updateNodeParameter,
+    ],
   );
   const flowEdges = useMemo(
     () => graphToFlowEdges(graph, selectedEdgeIds),
@@ -1962,6 +2010,38 @@ function App() {
 
   const handleNodesChange = useCallback(
     (changes: NodeChange<FlowNode>[]) => {
+      const dimensionChanges = nodeDimensionChanges(changes);
+      if (dimensionChanges.length > 0) {
+        setFlowNodeMeasurements((current) => {
+          let changed = false;
+          const next = new Map(current);
+          for (const change of dimensionChanges) {
+            const previous = next.get(change.id);
+            const nextWidth =
+              change.setAttributes === true || change.setAttributes === "width"
+                ? change.dimensions.width
+                : previous?.width;
+            const nextHeight =
+              change.setAttributes === true || change.setAttributes === "height"
+                ? change.dimensions.height
+                : previous?.height;
+            const measurement = {
+              measured: {
+                width: change.dimensions.width,
+                height: change.dimensions.height,
+              },
+              ...(nextWidth !== undefined ? { width: nextWidth } : {}),
+              ...(nextHeight !== undefined ? { height: nextHeight } : {}),
+            } satisfies FlowNodeMeasurement;
+            if (!flowNodeMeasurementEquals(previous, measurement)) {
+              next.set(change.id, measurement);
+              changed = true;
+            }
+          }
+          return changed ? next : current;
+        });
+      }
+
       const positionChanges = changes.filter(
         (
           change,

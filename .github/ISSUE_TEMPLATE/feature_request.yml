@@ -1,0 +1,43 @@
+name: Feature request
+description: Propose a focused improvement to ThreeFX Studio.
+title: "[Feature]: "
+labels:
+  - enhancement
+body:
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Builder UI
+        - Graph/core
+        - Runtime/effects
+        - Exporter/generated code
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: Problem
+      description: What workflow, limitation, or use case should this address?
+    validations:
+      required: true
+  - type: textarea
+    id: proposal
+    attributes:
+      label: Proposed solution
+      description: Describe the smallest useful version of the change.
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Note any simpler approaches, tradeoffs, or rejected options.
+  - type: textarea
+    id: validation
+    attributes:
+      label: How should this be validated?
+      description: Mention expected tests, visual checks, generated-code checks, or docs updates.

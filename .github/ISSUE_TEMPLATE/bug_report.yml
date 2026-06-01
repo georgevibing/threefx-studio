@@ -1,0 +1,60 @@
+name: Bug report
+description: Report a reproducible problem in the builder, graph, compiler, exporter, runtime, or generated code.
+title: "[Bug]: "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thanks for reporting a bug. Please include enough detail for someone else to reproduce the issue locally.
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - Builder UI
+        - Graph/core
+        - Runtime/effects
+        - Exporter/generated code
+        - Documentation
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: description
+    attributes:
+      label: What happened?
+      description: Describe the bug and the behavior you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: Steps to reproduce
+      description: List the exact steps, graph setup, browser action, or command that reproduces the problem.
+      placeholder: |
+        1. Run `pnpm dev`
+        2. Open the builder
+        3. ...
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Include browser, OS, Node.js, pnpm, GPU/WebGPU support, and relevant package versions.
+      placeholder: |
+        OS:
+        Browser:
+        Node:
+        pnpm:
+        WebGPU available:
+    validations:
+      required: true
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs, screenshots, or exported graph
+      description: Paste console output, attach screenshots, or include graph JSON if it helps reproduce the issue.
+      render: text

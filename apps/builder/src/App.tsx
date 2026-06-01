@@ -155,7 +155,7 @@ const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph:v1";
 const editorPersistence = createLocalStorageEditorPersistence(LOCAL_STORAGE_KEY);
 const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
   activeDebugView: "final",
-  advectionMode: "trilinear",
+  advectionMode: "maccormack",
   backend: "compat",
   diffusionIterations: 0,
   emitterCount: 0,
@@ -208,7 +208,7 @@ const AUTO_LAYOUT_KIND_ORDER: Record<string, number> = {
   quality: 9,
   parameter: 10,
 };
-const PREVIEW_WEBGPU_PIXEL_RATIO_CAP = 1;
+const PREVIEW_WEBGPU_PIXEL_RATIO_CAP = 1.15;
 const PREVIEW_WEBGL_PIXEL_RATIO_CAP = 2;
 const PREVIEW_UPDATE_DEBOUNCE_MS = 140;
 const DEFAULT_FLOW_VIEWPORT: Viewport = { x: 120, y: 80, zoom: 0.82 };

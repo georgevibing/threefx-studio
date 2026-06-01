@@ -33,7 +33,7 @@ describe("WispySmokeVFX", () => {
     expect(params.backendMode).toBe("auto");
     expect(params.gridResolution).toBe("high");
     expect(params.baseDensity).toBeGreaterThan(0);
-    expect(params.color).toBe("#c5d7df");
+    expect(params.color).toBe("#c3d4dc");
     expect(params.emissionColor).toBe("#eef8fc");
     expect(params.sourceGlowEnabled).toBe(false);
     expect(params.sourceGlowColor).toBe("#c7d2d8");

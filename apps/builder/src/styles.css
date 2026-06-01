@@ -245,6 +245,12 @@ button {
   position: relative;
 }
 
+.node-picker-toolbar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 6px;
+}
+
 .node-search-clear {
   position: absolute;
   top: 50%;
@@ -265,6 +271,40 @@ button {
 .node-search-clear:hover {
   background: var(--card);
   color: var(--foreground);
+}
+
+.expand-collapse-all-button {
+  display: grid;
+  height: 22px;
+  min-width: 22px;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  padding: 0;
+  cursor: pointer;
+}
+
+.expand-collapse-all-button:hover:not(:disabled) {
+  border-color: var(--ring);
+  color: var(--foreground);
+}
+
+.expand-collapse-all-button:disabled {
+  cursor: default;
+  opacity: 0.38;
+}
+
+.node-picker-toolbar .expand-collapse-all-button {
+  width: 32px;
+  height: 32px;
+  border-radius: 7px;
+}
+
+.quick-add .node-picker-toolbar .expand-collapse-all-button {
+  width: 34px;
+  height: 34px;
 }
 
 .node-picker-list {
@@ -735,7 +775,7 @@ button {
 }
 
 .node-parameter-count,
-.node-parameter-panel-actions button {
+.node-parameter-panel-actions .expand-collapse-all-button {
   display: grid;
   height: 22px;
   min-width: 22px;
@@ -745,21 +785,6 @@ button {
   background: var(--card);
   color: var(--muted-foreground);
   font-size: 10px;
-}
-
-.node-parameter-panel-actions button {
-  padding: 0;
-  cursor: pointer;
-}
-
-.node-parameter-panel-actions button:hover:not(:disabled) {
-  border-color: var(--ring);
-  color: var(--foreground);
-}
-
-.node-parameter-panel-actions button:disabled {
-  cursor: default;
-  opacity: 0.38;
 }
 
 .node-parameter-groups {

@@ -1127,6 +1127,7 @@ function App() {
     useReactFlow<FlowNode, FlowEdge>();
   const canUndo = historyRevision >= 0 && undoStackRef.current.length > 0;
   const canRedo = historyRevision >= 0 && redoStackRef.current.length > 0;
+  const flowNodeTypes = useMemo(() => FLOW_NODE_TYPES, []);
 
   const setSelectionDrag = useCallback((next: SelectionDragState | null) => {
     selectionDragRef.current = next;
@@ -2121,7 +2122,7 @@ function App() {
             className="threefx-flow"
             nodes={flowNodes}
             edges={flowEdges}
-            nodeTypes={FLOW_NODE_TYPES}
+            nodeTypes={flowNodeTypes}
             defaultViewport={viewportForGraph(graph)}
             minZoom={0.24}
             maxZoom={1.8}
@@ -2849,12 +2850,14 @@ function NodeParameterPanel({
       [group]: !(current[group] ?? false),
     }));
   }, []);
-  const expandAll = useCallback(() => {
-    setExpandedGroups(Object.fromEntries(parameterGroups.map((group) => [group.group, true])));
-  }, [parameterGroups]);
-  const collapseAll = useCallback(() => {
-    setExpandedGroups(defaultParameterGroupExpansion(parameterGroups));
-  }, [parameterGroups]);
+  const setAllGroupsExpanded = useCallback(
+    (expanded: boolean) => {
+      setExpandedGroups(
+        Object.fromEntries(parameterGroups.map((group) => [group.group, expanded])),
+      );
+    },
+    [parameterGroups],
+  );
 
   if (parameterGroups.length === 0) {
     return null;
@@ -2862,8 +2865,7 @@ function NodeParameterPanel({
 
   const parameterCount = parameterGroups.reduce((count, group) => count + group.entries.length, 0);
   const expandedCount = parameterGroups.filter((group) => expandedGroups[group.group]).length;
-  const canExpandAll = expandedCount < parameterGroups.length;
-  const canCollapseAll = expandedCount > 0;
+  const allGroupsExpanded = expandedCount === parameterGroups.length;
 
   return (
     <div
@@ -2876,24 +2878,12 @@ function NodeParameterPanel({
         <span>Parameters</span>
         <div className="node-parameter-panel-actions">
           <span className="node-parameter-count">{parameterCount}</span>
-          <button
-            type="button"
-            title="Expand all parameter groups"
-            aria-label={`Expand all ${node.label} parameter groups`}
-            disabled={!canExpandAll}
-            onClick={expandAll}
-          >
-            <ChevronsUpDown size={13} />
-          </button>
-          <button
-            type="button"
-            title="Collapse all parameter groups"
-            aria-label={`Collapse all ${node.label} parameter groups`}
-            disabled={!canCollapseAll}
-            onClick={collapseAll}
-          >
-            <ChevronsDownUp size={13} />
-          </button>
+          <ExpandCollapseAllButton
+            allExpanded={allGroupsExpanded}
+            targetLabel={`${node.label} parameter groups`}
+            onCollapseAll={() => setAllGroupsExpanded(false)}
+            onExpandAll={() => setAllGroupsExpanded(true)}
+          />
         </div>
       </div>
       <div className="node-parameter-groups">
@@ -3023,6 +3013,36 @@ function PortLabel({
     >
       <span>{port.label}</span>
     </div>
+  );
+}
+
+function ExpandCollapseAllButton({
+  allExpanded,
+  disabled = false,
+  iconSize = 13,
+  targetLabel,
+  onCollapseAll,
+  onExpandAll,
+}: {
+  readonly allExpanded: boolean;
+  readonly disabled?: boolean;
+  readonly iconSize?: number;
+  readonly targetLabel: string;
+  readonly onCollapseAll: () => void;
+  readonly onExpandAll: () => void;
+}) {
+  const action = allExpanded ? "Collapse" : "Expand";
+  return (
+    <button
+      type="button"
+      className="expand-collapse-all-button"
+      title={`${action} all ${targetLabel}`}
+      aria-label={`${action} all ${targetLabel}`}
+      disabled={disabled}
+      onClick={allExpanded ? onCollapseAll : onExpandAll}
+    >
+      {allExpanded ? <ChevronsDownUp size={iconSize} /> : <ChevronsUpDown size={iconSize} />}
+    </button>
   );
 }
 
@@ -3160,9 +3180,7 @@ function NodeDefinitionPicker({
 }) {
   const groups = useFilteredDefinitionGroups(query, graph, mode);
   const isSearching = query.trim().length > 0;
-  const [openCategories, setOpenCategories] = useState<ReadonlySet<string>>(
-    () => new Set(defaultNodeRegistry.list().map((definition) => definition.category)),
-  );
+  const [openCategories, setOpenCategories] = useState<ReadonlySet<string>>(() => new Set());
   const toggleCategory = useCallback((category: string) => {
     setOpenCategories((current) => {
       const next = new Set(current);
@@ -3174,16 +3192,44 @@ function NodeDefinitionPicker({
       return next;
     });
   }, []);
+  const setAllCategoriesExpanded = useCallback(
+    (expanded: boolean) => {
+      setOpenCategories((current) => {
+        const next = new Set(current);
+        for (const group of groups) {
+          if (expanded) {
+            next.add(group.category);
+          } else {
+            next.delete(group.category);
+          }
+        }
+        return next;
+      });
+    },
+    [groups],
+  );
+  const expandedCategoryCount = groups.filter((group) => openCategories.has(group.category)).length;
+  const allCategoriesExpanded = groups.length > 0 && expandedCategoryCount === groups.length;
 
   return (
     <>
-      <SearchInput
-        autoFocus={autoFocus}
-        label={searchLabel}
-        placeholder={searchPlaceholder}
-        value={query}
-        onChange={onQueryChange}
-      />
+      <div className="node-picker-toolbar">
+        <SearchInput
+          autoFocus={autoFocus}
+          label={searchLabel}
+          placeholder={searchPlaceholder}
+          value={query}
+          onChange={onQueryChange}
+        />
+        <ExpandCollapseAllButton
+          allExpanded={allCategoriesExpanded}
+          disabled={isSearching || groups.length === 0}
+          iconSize={14}
+          targetLabel="node categories"
+          onCollapseAll={() => setAllCategoriesExpanded(false)}
+          onExpandAll={() => setAllCategoriesExpanded(true)}
+        />
+      </div>
       <div className="node-picker-list">
         {groups.length > 0 ? (
           groups.map((group) => {
@@ -3767,7 +3813,23 @@ type PreviewRenderer = {
   setSize(width: number, height: number, updateStyle?: boolean): void;
 };
 
+type WebGPUAdapterLike = {
+  readonly limits?: {
+    readonly maxStorageBuffersPerShaderStage?: number;
+  };
+};
+
+type WebGPUAccessLike = {
+  requestAdapter(options?: unknown): Promise<WebGPUAdapterLike | null>;
+};
+
+type NavigatorWithOptionalWebGPU = Navigator & {
+  readonly gpu?: WebGPUAccessLike;
+};
+
 const PREVIEW_WEBGPU_INIT_TIMEOUT_MS = 6000;
+const PREVIEW_WEBGPU_REQUIRED_STORAGE_BUFFERS_PER_STAGE = 9;
+const PREVIEW_WEBGPU_LIMIT_REQUEST_CAP = 16;
 const CANVAS_FALLBACK_SMOKE_LAYERS = 28;
 
 function resolvePreviewPixelRatio(renderer: PreviewRenderer, width: number, height: number): number {
@@ -3782,6 +3844,33 @@ function resolvePreviewPixelRatio(renderer: PreviewRenderer, width: number, heig
   const budgetRatio = Math.sqrt(internalPixelBudget / Math.max(1, width * height));
 
   return Math.max(0.55, Math.min(cappedDeviceRatio, budgetRatio));
+}
+
+async function resolvePreviewWebGPURequiredLimits(): Promise<Record<string, number> | null> {
+  const gpu = (navigator as NavigatorWithOptionalWebGPU).gpu;
+  if (!gpu) {
+    return null;
+  }
+
+  try {
+    const adapter = await gpu.requestAdapter({
+      featureLevel: "compatibility",
+      powerPreference: "high-performance",
+    });
+    const storageBufferLimit = adapter?.limits?.maxStorageBuffersPerShaderStage ?? 0;
+    if (storageBufferLimit < PREVIEW_WEBGPU_REQUIRED_STORAGE_BUFFERS_PER_STAGE) {
+      return null;
+    }
+
+    return {
+      maxStorageBuffersPerShaderStage: Math.min(
+        storageBufferLimit,
+        PREVIEW_WEBGPU_LIMIT_REQUEST_CAP,
+      ),
+    };
+  } catch {
+    return null;
+  }
 }
 
 async function waitForPreviewWebGPUInit(renderer: PreviewRenderer): Promise<boolean> {
@@ -3809,9 +3898,15 @@ async function createPreviewWebGPURenderer(
     const initialized = await Promise.race([
       (async () => {
         const webgpu = await import("three/webgpu");
+        const requiredLimits = await resolvePreviewWebGPURequiredLimits();
+        if (!requiredLimits) {
+          return false;
+        }
         renderer = new webgpu.WebGPURenderer({
           canvas,
           antialias: true,
+          powerPreference: "high-performance",
+          requiredLimits,
         }) as unknown as PreviewRenderer;
         return await waitForPreviewWebGPUInit(renderer);
       })(),

@@ -36,6 +36,7 @@ import {
   PanelLeftOpen,
   Plus,
   Redo2,
+  RotateCcw,
   Save,
   Trash2,
   Undo2,
@@ -97,7 +98,12 @@ type FlowNodeData = {
   readonly node: GraphNode;
   readonly onFocusNode: (nodeId: string) => void;
   readonly onNodeLabelChange: (nodeId: string, label: string) => void;
-  readonly onNodeParameterChange: (nodeId: string, id: string, value: ParameterValue) => void;
+  readonly onNodeParameterChange: (
+    nodeId: string,
+    id: string,
+    value: ParameterValue,
+    options?: ParameterChangeOptions,
+  ) => void;
 };
 
 type FlowNode = Node<FlowNodeData, "threefxNode">;
@@ -140,12 +146,21 @@ type EditorSnapshot = {
   readonly graph: GraphDocument;
   readonly selectedEdgeIds: readonly string[];
   readonly selectedNodeIds: readonly string[];
-  readonly status: string;
+};
+
+type ParameterChangeOptions = {
+  readonly commitTransient?: boolean;
+  readonly transient?: boolean;
 };
 
 type PreviewTelemetry = PreviewPerformanceStats & {
   readonly webgpuSupported: boolean;
   readonly webgpuLabel: string;
+};
+
+type ToastMessage = {
+  readonly id: number;
+  readonly message: string;
 };
 
 type NodeMenuState = {
@@ -179,7 +194,7 @@ type SelectionDragState = {
 type StartupGraphSource = "preset" | "saved-graph";
 
 const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph:v1";
-const NODE_PALETTE_VISIBLE_STORAGE_KEY = "threefx-studio:node-palette-visible:v1";
+const NODE_PALETTE_EXPANDED_STORAGE_KEY = "threefx-studio:node-palette-visible:v1";
 const STARTUP_GRAPH_CONFIG: {
   readonly presetId: EditorPresetId;
   readonly source: StartupGraphSource;
@@ -188,8 +203,8 @@ const STARTUP_GRAPH_CONFIG: {
   source: "preset",
 };
 const editorPersistence = createLocalStorageEditorPersistence(LOCAL_STORAGE_KEY);
-const nodePaletteVisibilityPersistence = createLocalStorageEditorPreference<boolean>(
-  NODE_PALETTE_VISIBLE_STORAGE_KEY,
+const nodePaletteExpandedPersistence = createLocalStorageEditorPreference<boolean>(
+  NODE_PALETTE_EXPANDED_STORAGE_KEY,
   {
     parse(source) {
       if (source === "true") {
@@ -351,7 +366,12 @@ function graphToFlowNodes(
   graph: GraphDocument,
   selectedNodeIds: ReadonlySet<string>,
   nodeMeasurements: ReadonlyMap<string, FlowNodeMeasurement>,
-  onNodeParameterChange: (nodeId: string, id: string, value: ParameterValue) => void,
+  onNodeParameterChange: (
+    nodeId: string,
+    id: string,
+    value: ParameterValue,
+    options?: ParameterChangeOptions,
+  ) => void,
   onNodeLabelChange: (nodeId: string, label: string) => void,
   onFocusNode: (nodeId: string) => void,
 ): FlowNode[] {
@@ -382,6 +402,29 @@ function graphToFlowNodes(
       },
     ];
   });
+}
+
+function graphWithNodeParameter(
+  graph: GraphDocument,
+  nodeId: string,
+  id: string,
+  value: ParameterValue,
+): GraphDocument {
+  return {
+    ...graph,
+    nodes: graph.nodes.map((node) => {
+      if (node.id !== nodeId) {
+        return node;
+      }
+      return {
+        ...node,
+        parameters: {
+          ...(node.parameters ?? {}),
+          [id]: value,
+        },
+      };
+    }),
+  };
 }
 
 function graphToFlowEdges(graph: GraphDocument, selectedEdgeIds: ReadonlySet<string>): FlowEdge[] {
@@ -795,13 +838,17 @@ function portToneStyle(type: PortType): React.CSSProperties {
   } as React.CSSProperties;
 }
 
-function nodeCategoryToneStyle(category: NodeDefinitionGroup): React.CSSProperties {
-  const tone = getPortTypeTone(category.definitions[0]?.kind ?? "any");
+function nodeKindToneStyle(kind: string): React.CSSProperties {
+  const tone = getPortTypeTone(kind);
   return {
     "--category-color": tone.accent,
     "--category-background": tone.background,
     "--category-border-color": tone.border,
   } as React.CSSProperties;
+}
+
+function nodeCategoryToneStyle(category: NodeDefinitionGroup): React.CSSProperties {
+  return nodeKindToneStyle(category.definitions[0]?.kind ?? "any");
 }
 
 function groupNodeDefinitions(
@@ -1145,7 +1192,7 @@ function App() {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null);
   const [isMiddlePanning, setIsMiddlePanning] = useState(false);
-  const [isNodePaletteVisible, setIsNodePaletteVisible] = useState(false);
+  const [isNodePaletteExpanded, setIsNodePaletteExpanded] = useState(false);
   const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
   const [isPresetDialogOpen, setIsPresetDialogOpen] = useState(false);
   const [isEditorHydrating, setIsEditorHydrating] = useState(() =>
@@ -1162,18 +1209,21 @@ function App() {
     webgpuLabel: "Checking",
     webgpuSupported: false,
   });
-  const [status, setStatus] = useState(() =>
-    shouldHydrateSavedGraphOnStartup() ? "Loading saved graph" : "Ready",
-  );
+  const [toast, setToast] = useState<ToastMessage | null>(null);
   const [isApple] = useState(() => isApplePlatform());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canvasPanelRef = useRef<HTMLDivElement | null>(null);
+  const nodePaletteRef = useRef<HTMLElement | null>(null);
+  const nodePaletteSearchInputRef = useRef<HTMLInputElement | null>(null);
   const pendingMoveSnapshotRef = useRef<EditorSnapshot | null>(null);
+  const pendingNodePaletteSearchFocusRef = useRef(false);
+  const pendingParameterSnapshotRef = useRef<EditorSnapshot | null>(null);
   const selectionBaseNodeIdsRef = useRef<ReadonlySet<string>>(new Set());
   const selectionDragRef = useRef<SelectionDragState | null>(null);
   const nodePalettePreferenceTouchedRef = useRef(false);
   const suppressNextNodeSelectionChangeRef = useRef(false);
   const suppressNextPaneClickRef = useRef(false);
+  const toastTimeoutRef = useRef<number | null>(null);
   const undoStackRef = useRef<EditorSnapshot[]>([]);
   const redoStackRef = useRef<EditorSnapshot[]>([]);
   const { fitView, flowToScreenPosition, getNodes, screenToFlowPosition, setCenter, setViewport } =
@@ -1186,14 +1236,33 @@ function App() {
     setSelectionDragState(next);
   }, []);
 
+  const showToast = useCallback((message: string) => {
+    if (toastTimeoutRef.current !== null) {
+      window.clearTimeout(toastTimeoutRef.current);
+    }
+    setToast({ id: Date.now(), message });
+    toastTimeoutRef.current = window.setTimeout(() => {
+      setToast(null);
+      toastTimeoutRef.current = null;
+    }, 3200);
+  }, []);
+
+  useEffect(
+    () => () => {
+      if (toastTimeoutRef.current !== null) {
+        window.clearTimeout(toastTimeoutRef.current);
+      }
+    },
+    [],
+  );
+
   const createSnapshot = useCallback(
     (sourceGraph: GraphDocument = graph): EditorSnapshot => ({
       graph: sourceGraph,
       selectedEdgeIds: [...selectedEdgeIds],
       selectedNodeIds: [...selectedNodeIds],
-      status,
     }),
-    [graph, selectedEdgeIds, selectedNodeIds, status],
+    [graph, selectedEdgeIds, selectedNodeIds],
   );
 
   const pushUndoSnapshot = useCallback((snapshot: EditorSnapshot) => {
@@ -1210,7 +1279,6 @@ function App() {
     setGraph(snapshot.graph);
     setSelectedNodeIds(new Set(snapshot.selectedNodeIds));
     setSelectedEdgeIds(new Set(snapshot.selectedEdgeIds));
-    setStatus(snapshot.status);
     setQuickAdd(null);
     setNodeMenu(null);
     setIsPresetDialogOpen(false);
@@ -1228,11 +1296,10 @@ function App() {
           return;
         }
         if (result.status === "missing") {
-          setStatus("Ready");
           return;
         }
         if (result.status === "error") {
-          setStatus(`Local graph load failed: ${result.message}`);
+          showToast(`Local graph load failed: ${result.message}`);
           return;
         }
         pendingMoveSnapshotRef.current = null;
@@ -1246,12 +1313,14 @@ function App() {
         setNodeMenu(null);
         setIsPresetDialogOpen(false);
         setFlowNodeMeasurements(new Map());
-        setStatus(result.valid ? "Loaded saved graph" : "Loaded saved graph with validation errors");
+        showToast(
+          result.valid ? "Loaded saved graph" : "Loaded saved graph with validation errors",
+        );
       })
       .catch((error) => {
         if (!disposed) {
           console.error(error);
-          setStatus("Local graph load failed");
+          showToast("Local graph load failed");
         }
       })
       .finally(() => {
@@ -1262,16 +1331,16 @@ function App() {
     return () => {
       disposed = true;
     };
-  }, []);
+  }, [showToast]);
 
   useEffect(() => {
     let disposed = false;
-    void nodePaletteVisibilityPersistence.load().then((result) => {
+    void nodePaletteExpandedPersistence.load().then((result) => {
       if (disposed || nodePalettePreferenceTouchedRef.current) {
         return;
       }
       if (result.status === "loaded") {
-        setIsNodePaletteVisible(result.value);
+        setIsNodePaletteExpanded(result.value);
       } else if (result.status === "error") {
         console.warn(result.message);
       }
@@ -1281,14 +1350,44 @@ function App() {
     };
   }, []);
 
-  const toggleNodePalette = useCallback(() => {
-    const next = !isNodePaletteVisible;
+  const setNodePaletteExpandedPreference = useCallback((next: boolean) => {
     nodePalettePreferenceTouchedRef.current = true;
-    setIsNodePaletteVisible(next);
-    void nodePaletteVisibilityPersistence.save(next).catch((error) => {
+    setIsNodePaletteExpanded(next);
+    void nodePaletteExpandedPersistence.save(next).catch((error) => {
       console.error(error);
     });
-  }, [isNodePaletteVisible]);
+  }, []);
+
+  const toggleNodePalette = useCallback(() => {
+    setNodePaletteExpandedPreference(!isNodePaletteExpanded);
+  }, [isNodePaletteExpanded, setNodePaletteExpandedPreference]);
+
+  const focusNodePaletteSearch = useCallback(() => {
+    if (!isNodePaletteExpanded) {
+      pendingNodePaletteSearchFocusRef.current = true;
+      setNodePaletteExpandedPreference(true);
+      return;
+    }
+    const input = nodePaletteSearchInputRef.current;
+    if (!input) {
+      pendingNodePaletteSearchFocusRef.current = true;
+      return;
+    }
+    input.focus();
+    input.select();
+  }, [isNodePaletteExpanded, setNodePaletteExpandedPreference]);
+
+  useEffect(() => {
+    if (!isNodePaletteExpanded || !pendingNodePaletteSearchFocusRef.current) {
+      return;
+    }
+    pendingNodePaletteSearchFocusRef.current = false;
+    window.requestAnimationFrame(() => {
+      const input = nodePaletteSearchInputRef.current;
+      input?.focus();
+      input?.select();
+    });
+  }, [isNodePaletteExpanded]);
 
   const commitGraphChange = useCallback(
     (
@@ -1312,11 +1411,11 @@ function App() {
         setSelectedEdgeIds(new Set(options.nextSelectedEdgeIds));
       }
       if (options.status) {
-        setStatus(options.status);
+        showToast(options.status);
       }
       return true;
     },
-    [createSnapshot, graph, pushUndoSnapshot],
+    [createSnapshot, graph, pushUndoSnapshot, showToast],
   );
 
   const undoEdit = useCallback(() => {
@@ -1326,9 +1425,9 @@ function App() {
     }
     redoStackRef.current.push(createSnapshot(graph));
     restoreSnapshot(snapshot);
-    setStatus("Undo");
+    showToast("Undo");
     setHistoryRevision((revision) => revision + 1);
-  }, [createSnapshot, graph, restoreSnapshot]);
+  }, [createSnapshot, graph, restoreSnapshot, showToast]);
 
   const redoEdit = useCallback(() => {
     const snapshot = redoStackRef.current.pop();
@@ -1337,9 +1436,9 @@ function App() {
     }
     undoStackRef.current.push(createSnapshot(graph));
     restoreSnapshot(snapshot);
-    setStatus("Redo");
+    showToast("Redo");
     setHistoryRevision((revision) => revision + 1);
-  }, [createSnapshot, graph, restoreSnapshot]);
+  }, [createSnapshot, graph, restoreSnapshot, showToast]);
 
   const addNode = useCallback(
     (
@@ -1489,24 +1588,26 @@ function App() {
   }, [commitGraphChange, graph.edges, graph.nodes, selectedNodeIds]);
 
   const updateNodeParameter = useCallback(
-    (nodeId: string, id: string, value: ParameterValue) => {
-      commitGraphChange((current) => ({
-        ...current,
-        nodes: current.nodes.map((node) => {
-          if (node.id !== nodeId) {
-            return node;
-          }
-          return {
-            ...node,
-            parameters: {
-              ...(node.parameters ?? {}),
-              [id]: value,
-            },
-          };
-        }),
-      }));
+    (nodeId: string, id: string, value: ParameterValue, options: ParameterChangeOptions = {}) => {
+      if (options.transient || options.commitTransient) {
+        if (!pendingParameterSnapshotRef.current) {
+          pendingParameterSnapshotRef.current = createSnapshot(graph);
+        }
+        setGraph((current) => graphWithNodeParameter(current, nodeId, id, value));
+        if (options.commitTransient) {
+          pushUndoSnapshot(pendingParameterSnapshotRef.current);
+          pendingParameterSnapshotRef.current = null;
+        }
+        return;
+      }
+
+      if (pendingParameterSnapshotRef.current) {
+        pushUndoSnapshot(pendingParameterSnapshotRef.current);
+        pendingParameterSnapshotRef.current = null;
+      }
+      commitGraphChange((current) => graphWithNodeParameter(current, nodeId, id, value));
     },
-    [commitGraphChange],
+    [commitGraphChange, createSnapshot, graph, pushUndoSnapshot],
   );
 
   const updateNodeLabel = useCallback(
@@ -1584,26 +1685,30 @@ function App() {
 
   const saveLocal = useCallback(() => {
     if (isEditorHydrating) {
-      setStatus("Loading saved graph");
+      showToast("Loading saved graph");
       return;
     }
     void editorPersistence
       .save({ graph })
-      .then(() => setStatus("Saved graph locally"))
+      .then(() => showToast("Saved graph locally"))
       .catch((error) => {
         console.error(error);
-        setStatus("Save failed");
+        showToast("Save failed");
       });
-  }, [graph, isEditorHydrating]);
+  }, [graph, isEditorHydrating, showToast]);
 
   const loadLocal = useCallback(() => {
+    if (isEditorHydrating) {
+      showToast("Loading saved graph");
+      return;
+    }
     void editorPersistence.load().then((result) => {
       if (result.status === "missing") {
-        setStatus("No local graph saved");
+        showToast("No local graph saved");
         return;
       }
       if (result.status === "error") {
-        setStatus(`Local graph load failed: ${result.message}`);
+        showToast(`Local graph load failed: ${result.message}`);
         return;
       }
       commitGraphChange(() => result.state.graph, {
@@ -1613,7 +1718,7 @@ function App() {
       });
       void setViewport(viewportForGraph(result.state.graph));
     });
-  }, [commitGraphChange, setViewport]);
+  }, [commitGraphChange, isEditorHydrating, setViewport, showToast]);
 
   const startFromPreset = useCallback(
     (presetId: EditorPresetId) => {
@@ -1909,14 +2014,35 @@ function App() {
 
   const handleKeyDown = useCallback(
     (event: KeyboardEvent | React.KeyboardEvent) => {
-      if (event.defaultPrevented || isEditableEventTarget(event.target)) {
+      if (event.defaultPrevented) {
+        return;
+      }
+      const key = event.key.toLowerCase();
+      const primary = isPrimaryModifierPressed(event, isApple);
+      const target = event.target;
+      const isNodePaletteTarget =
+        target instanceof window.Node && Boolean(nodePaletteRef.current?.contains(target));
+      if (primary && key === "s") {
+        consumeShortcutEvent(event);
+        saveLocal();
+        return;
+      }
+      if (primary && key === "l") {
+        consumeShortcutEvent(event);
+        loadLocal();
+        return;
+      }
+      if (primary && key === "f" && isNodePaletteTarget) {
+        consumeShortcutEvent(event);
+        focusNodePaletteSearch();
+        return;
+      }
+      if (isEditableEventTarget(event.target)) {
         return;
       }
       if (isEditorHydrating) {
         return;
       }
-      const key = event.key.toLowerCase();
-      const primary = isPrimaryModifierPressed(event, isApple);
       if (primary && key === "z" && !event.shiftKey) {
         consumeShortcutEvent(event);
         undoEdit();
@@ -1940,17 +2066,12 @@ function App() {
         duplicateSelected();
         return;
       }
-      if (primary && key === "s") {
-        consumeShortcutEvent(event);
-        saveLocal();
-        return;
-      }
       if (primary && key === "n") {
         consumeShortcutEvent(event);
         setIsPresetDialogOpen(true);
         return;
       }
-      if (key === "f") {
+      if (!primary && key === "f") {
         consumeShortcutEvent(event);
         focusSelection();
         return;
@@ -1980,8 +2101,10 @@ function App() {
       deleteSelection,
       duplicateSelected,
       focusSelection,
+      focusNodePaletteSearch,
       isApple,
       isEditorHydrating,
+      loadLocal,
       redoEdit,
       saveLocal,
       selectAllNodes,
@@ -2144,7 +2267,7 @@ function App() {
         if (!isDragging && pendingMoveSnapshotRef.current) {
           pushUndoSnapshot(pendingMoveSnapshotRef.current);
           pendingMoveSnapshotRef.current = null;
-          setStatus("Moved nodes");
+          showToast("Moved nodes");
         } else if (!isDragging) {
           pushUndoSnapshot(createSnapshot(graph));
         }
@@ -2178,7 +2301,7 @@ function App() {
         suppressNextNodeSelectionChangeRef.current = false;
       }
     },
-    [createSnapshot, graph, pushUndoSnapshot],
+    [createSnapshot, graph, pushUndoSnapshot, showToast],
   );
 
   const handleEdgesChange = useCallback((changes: EdgeChange<FlowEdge>[]) => {
@@ -2230,13 +2353,12 @@ function App() {
   );
 
   if (isEditorHydrating) {
-    return <EditorLoadingShell status={status} />;
+    return <EditorLoadingShell />;
   }
 
   return (
     <main className="app-shell" tabIndex={-1}>
       <TopBar
-        status={status}
         onSave={saveLocal}
         onLoad={loadLocal}
         onNewProject={() => setIsPresetDialogOpen(true)}
@@ -2245,11 +2367,9 @@ function App() {
         onAutoLayout={autoLayoutGraph}
         onRedo={redoEdit}
         onShowShortcuts={() => setIsShortcutDialogOpen(true)}
-        onToggleNodePalette={toggleNodePalette}
         onUndo={undoEdit}
         canRedo={canRedo}
         canUndo={canUndo}
-        isNodePaletteVisible={isNodePaletteVisible}
       />
       <input
         ref={fileInputRef}
@@ -2264,16 +2384,18 @@ function App() {
           event.currentTarget.value = "";
         }}
       />
-      <section className={`workspace ${isNodePaletteVisible ? "workspace-palette-open" : ""}`}>
-        {isNodePaletteVisible ? (
-          <NodePalette
-            query={paletteQuery}
-            onQueryChange={setPaletteQuery}
-            quickAdd={quickAdd}
-            graph={graph}
-            onAddNode={addNode}
-          />
-        ) : null}
+      <section className={`workspace ${isNodePaletteExpanded ? "workspace-palette-expanded" : ""}`}>
+        <NodePalette
+          expanded={isNodePaletteExpanded}
+          paletteRef={nodePaletteRef}
+          query={paletteQuery}
+          onQueryChange={setPaletteQuery}
+          quickAdd={quickAdd}
+          searchInputRef={nodePaletteSearchInputRef}
+          graph={graph}
+          onAddNode={addNode}
+          onToggleExpanded={toggleNodePalette}
+        />
         <div
           ref={canvasPanelRef}
           className={`canvas-panel ${isMiddlePanning ? "canvas-panel-panning" : ""}`}
@@ -2382,11 +2504,12 @@ function App() {
         onClose={() => setIsPresetDialogOpen(false)}
         onSelectPreset={startFromPreset}
       />
+      <ToastViewport toast={toast} />
     </main>
   );
 }
 
-function EditorLoadingShell({ status }: { readonly status: string }) {
+function EditorLoadingShell() {
   return (
     <main className="app-shell" tabIndex={-1}>
       <header className="topbar">
@@ -2394,7 +2517,6 @@ function EditorLoadingShell({ status }: { readonly status: string }) {
           <img className="brand-logo" src="/logo.png" alt="" aria-hidden="true" />
           <div>
             <h1>ThreeFX Studio</h1>
-            <span>{status}</span>
           </div>
         </div>
       </header>
@@ -2407,7 +2529,6 @@ function EditorLoadingShell({ status }: { readonly status: string }) {
 }
 
 function TopBar({
-  status,
   onSave,
   onLoad,
   onNewProject,
@@ -2416,13 +2537,10 @@ function TopBar({
   onAutoLayout,
   onRedo,
   onShowShortcuts,
-  onToggleNodePalette,
   onUndo,
   canRedo,
   canUndo,
-  isNodePaletteVisible,
 }: {
-  readonly status: string;
   readonly onSave: () => void;
   readonly onLoad: () => void;
   readonly onNewProject: () => void;
@@ -2431,11 +2549,9 @@ function TopBar({
   readonly onAutoLayout: () => void;
   readonly onRedo: () => void;
   readonly onShowShortcuts: () => void;
-  readonly onToggleNodePalette: () => void;
   readonly onUndo: () => void;
   readonly canRedo: boolean;
   readonly canUndo: boolean;
-  readonly isNodePaletteVisible: boolean;
 }) {
   return (
     <header className="topbar">
@@ -2443,32 +2559,69 @@ function TopBar({
         <img className="brand-logo" src="/logo.png" alt="" aria-hidden="true" />
         <div>
           <h1>ThreeFX Studio</h1>
-          <span>{status}</span>
         </div>
       </div>
-      <div className="topbar-actions">
-        <IconButton
-          title={isNodePaletteVisible ? "Hide node palette" : "Show node palette"}
-          onClick={onToggleNodePalette}
-          icon={
-            isNodePaletteVisible ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />
-          }
-        />
-        <IconButton title="New from preset" onClick={onNewProject} icon={<Plus size={16} />} />
-        <IconButton title="Save" onClick={onSave} icon={<Save size={16} />} />
-        <IconButton title="Load" onClick={onLoad} icon={<FolderOpen size={16} />} />
-        <IconButton title="Import" onClick={onImportClick} icon={<Upload size={16} />} />
-        <IconButton title="Download graph" onClick={onDownloadJson} icon={<FileDown size={16} />} />
-        <IconButton title="Undo" onClick={onUndo} icon={<Undo2 size={16} />} disabled={!canUndo} />
-        <IconButton title="Redo" onClick={onRedo} icon={<Redo2 size={16} />} disabled={!canRedo} />
-        <IconButton title="Auto layout" onClick={onAutoLayout} icon={<WandSparkles size={16} />} />
-        <IconButton
-          title="Keyboard shortcuts"
-          onClick={onShowShortcuts}
-          icon={<Keyboard size={16} />}
-        />
+      <div className="topbar-actions" aria-label="Editor actions">
+        <div className="topbar-action-group" role="group" aria-label="Project">
+          <IconButton title="New from preset" onClick={onNewProject} icon={<Plus size={16} />} />
+          <IconButton title="Save" onClick={onSave} icon={<Save size={16} />} />
+          <IconButton title="Load" onClick={onLoad} icon={<FolderOpen size={16} />} />
+        </div>
+        <ToolbarDivider />
+        <div className="topbar-action-group" role="group" aria-label="Import and export">
+          <IconButton title="Import" onClick={onImportClick} icon={<Upload size={16} />} />
+          <IconButton
+            title="Download graph"
+            onClick={onDownloadJson}
+            icon={<FileDown size={16} />}
+          />
+        </div>
+        <ToolbarDivider />
+        <div className="topbar-action-group" role="group" aria-label="Edit history">
+          <IconButton
+            title="Undo"
+            onClick={onUndo}
+            icon={<Undo2 size={16} />}
+            disabled={!canUndo}
+          />
+          <IconButton
+            title="Redo"
+            onClick={onRedo}
+            icon={<Redo2 size={16} />}
+            disabled={!canRedo}
+          />
+        </div>
+        <ToolbarDivider />
+        <div className="topbar-action-group" role="group" aria-label="Layout and help">
+          <IconButton
+            title="Auto layout"
+            onClick={onAutoLayout}
+            icon={<WandSparkles size={16} />}
+          />
+          <IconButton
+            title="Keyboard shortcuts"
+            onClick={onShowShortcuts}
+            icon={<Keyboard size={16} />}
+          />
+        </div>
       </div>
     </header>
+  );
+}
+
+function ToolbarDivider() {
+  return <span className="topbar-action-divider" role="separator" aria-orientation="vertical" />;
+}
+
+function ToastViewport({ toast }: { readonly toast: ToastMessage | null }) {
+  return (
+    <div className="toast-viewport" aria-live="polite" aria-atomic="true">
+      {toast ? (
+        <div key={toast.id} className="toast-message" role="status">
+          {toast.message}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -2545,6 +2698,11 @@ function ShortcutDialog({
       action: "Save",
       description: "Store local graph",
       keys: [shortcutLabel(isApple, "Mod", "S")],
+    },
+    {
+      action: "Load",
+      description: "Restore local graph",
+      keys: [shortcutLabel(isApple, "Mod", "L")],
     },
     {
       action: "New project",
@@ -2959,7 +3117,10 @@ function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
   const parameterType = getParameterNodeValueType(node.type);
 
   return (
-    <article className={`graph-node ${selected ? "graph-node-selected" : ""}`}>
+    <article
+      className={`graph-node ${selected ? "graph-node-selected" : ""}`}
+      style={nodeKindToneStyle(definition.kind)}
+    >
       {inputs.map((port, index) => (
         <PortKnob
           key={port.id}
@@ -2986,7 +3147,9 @@ function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
         )}
         <div className="graph-node-header-meta">
           {parameterType ? <TypePill type={parameterType} /> : null}
-          {!isParameterNode ? <small>{definition.category}</small> : null}
+          {!isParameterNode ? (
+            <small className="graph-node-category">{definition.category}</small>
+          ) : null}
         </div>
       </div>
       <div className="port-grid">
@@ -3061,7 +3224,12 @@ function ParameterNodeValuePanel({
 }: {
   readonly node: GraphNode;
   readonly type: ParameterType;
-  readonly onNodeParameterChange: (nodeId: string, id: string, value: ParameterValue) => void;
+  readonly onNodeParameterChange: (
+    nodeId: string,
+    id: string,
+    value: ParameterValue,
+    options?: ParameterChangeOptions,
+  ) => void;
 }) {
   const options = getParameterNodeOptions(type);
   const metadata: ParameterMetadata = {
@@ -3088,7 +3256,7 @@ function ParameterNodeValuePanel({
             hideLabel
             metadata={metadata}
             value={node.parameters?.value ?? metadata.defaultValue}
-            onChange={(value) => onNodeParameterChange(node.id, "value", value)}
+            onChange={(value, options) => onNodeParameterChange(node.id, "value", value, options)}
           />
         </div>
       </div>
@@ -3105,7 +3273,12 @@ function NodeParameterPanel({
   readonly entries: readonly NodeParameterEntry[];
   readonly node: GraphNode;
   readonly onFocusNode: (nodeId: string) => void;
-  readonly onNodeParameterChange: (nodeId: string, id: string, value: ParameterValue) => void;
+  readonly onNodeParameterChange: (
+    nodeId: string,
+    id: string,
+    value: ParameterValue,
+    options?: ParameterChangeOptions,
+  ) => void;
 }) {
   const parameterGroups = useMemo(() => groupParameterEntries(entries), [entries]);
   const signature = useMemo(() => parameterGroupSignature(parameterGroups), [parameterGroups]);
@@ -3204,7 +3377,12 @@ function NodeParameterField({
   readonly entry: NodeParameterEntry;
   readonly node: GraphNode;
   readonly onFocusNode: (nodeId: string) => void;
-  readonly onNodeParameterChange: (nodeId: string, id: string, value: ParameterValue) => void;
+  readonly onNodeParameterChange: (
+    nodeId: string,
+    id: string,
+    value: ParameterValue,
+    options?: ParameterChangeOptions,
+  ) => void;
 }) {
   const binding = entry.binding;
   const sourceNode = binding?.sourceNode ?? null;
@@ -3234,7 +3412,9 @@ function NodeParameterField({
           hideLabel
           metadata={entry.metadata}
           value={entry.value}
-          onChange={(value) => onNodeParameterChange(node.id, entry.port.id, value)}
+          onChange={(value, options) =>
+            onNodeParameterChange(node.id, entry.port.id, value, options)
+          }
         />
       )}
     </div>
@@ -3320,39 +3500,59 @@ function ExpandCollapseAllButton({
 }
 
 function NodePalette({
+  expanded,
+  paletteRef,
   query,
   onQueryChange,
   quickAdd,
+  searchInputRef,
   graph,
   onAddNode,
+  onToggleExpanded,
 }: {
+  readonly expanded: boolean;
+  readonly paletteRef: React.MutableRefObject<HTMLElement | null>;
   readonly query: string;
   readonly onQueryChange: (value: string) => void;
   readonly quickAdd: QuickAddState | null;
+  readonly searchInputRef: React.MutableRefObject<HTMLInputElement | null>;
   readonly graph: GraphDocument;
   readonly onAddNode: (
     type: string,
     position: { x: number; y: number },
     mode?: QuickAddMode,
   ) => void;
+  readonly onToggleExpanded: () => void;
 }) {
   const mode = quickAdd?.mode ?? { kind: "free" };
   return (
-    <aside className="node-palette">
-      <div className="panel-heading">
-        <h2>Nodes</h2>
-        <Plus size={16} />
+    <aside
+      className={`node-palette ${expanded ? "node-palette-expanded" : "node-palette-collapsed"}`}
+      ref={(element) => {
+        paletteRef.current = element;
+      }}
+    >
+      <div className="node-palette-header">
+        {expanded ? <h2>Nodes</h2> : null}
+        <IconButton
+          title={expanded ? "Collapse node palette" : "Expand node palette"}
+          onClick={onToggleExpanded}
+          icon={expanded ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />}
+        />
       </div>
-      <NodeDefinitionPicker
-        graph={graph}
-        mode={mode}
-        query={query}
-        searchLabel="Search nodes"
-        searchPlaceholder="Search"
-        onAddNode={(type) => onAddNode(type, quickAdd?.flow ?? { x: -80, y: 40 }, quickAdd?.mode)}
-        onQueryChange={onQueryChange}
-        draggable
-      />
+      {expanded ? (
+        <NodeDefinitionPicker
+          graph={graph}
+          mode={mode}
+          query={query}
+          searchLabel="Search nodes"
+          searchPlaceholder="Search"
+          searchInputRef={searchInputRef}
+          onAddNode={(type) => onAddNode(type, quickAdd?.flow ?? { x: -80, y: 40 }, quickAdd?.mode)}
+          onQueryChange={onQueryChange}
+          draggable
+        />
+      ) : null}
     </aside>
   );
 }
@@ -3395,12 +3595,14 @@ function useFilteredDefinitionGroups(
 
 function SearchInput({
   autoFocus = false,
+  inputRef,
   label,
   placeholder,
   value,
   onChange,
 }: {
   readonly autoFocus?: boolean;
+  readonly inputRef?: React.MutableRefObject<HTMLInputElement | null> | undefined;
   readonly label: string;
   readonly placeholder: string;
   readonly value: string;
@@ -3410,6 +3612,11 @@ function SearchInput({
     <div className="node-search">
       <input
         autoFocus={autoFocus}
+        ref={(element) => {
+          if (inputRef) {
+            inputRef.current = element;
+          }
+        }}
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
@@ -3436,6 +3643,7 @@ function NodeDefinitionPicker({
   graph,
   mode,
   query,
+  searchInputRef,
   searchLabel,
   searchPlaceholder,
   onAddNode,
@@ -3446,6 +3654,7 @@ function NodeDefinitionPicker({
   readonly graph: GraphDocument;
   readonly mode: QuickAddMode;
   readonly query: string;
+  readonly searchInputRef?: React.MutableRefObject<HTMLInputElement | null> | undefined;
   readonly searchLabel: string;
   readonly searchPlaceholder: string;
   readonly onAddNode: (type: string) => void;
@@ -3489,6 +3698,7 @@ function NodeDefinitionPicker({
       <div className="node-picker-toolbar">
         <SearchInput
           autoFocus={autoFocus}
+          inputRef={searchInputRef}
           label={searchLabel}
           placeholder={searchPlaceholder}
           value={query}
@@ -3758,10 +3968,63 @@ function parseNumberDraft(draft: string): number | null {
   return Number.isFinite(value) ? value : null;
 }
 
+function clampNumericValue(value: number, min?: number, max?: number): number {
+  let next = value;
+  if (min !== undefined) {
+    next = Math.max(min, next);
+  }
+  if (max !== undefined) {
+    next = Math.min(max, next);
+  }
+  return next;
+}
+
+function precisionForStep(step: number | undefined): number {
+  if (!step || !Number.isFinite(step)) {
+    return 4;
+  }
+  const text = String(step).toLowerCase();
+  if (text.includes("e-")) {
+    return Number(text.split("e-")[1] ?? 4);
+  }
+  const decimal = text.split(".")[1];
+  return decimal ? decimal.length : 0;
+}
+
+function normalizeNumericValue(
+  value: number,
+  options: {
+    readonly integer: boolean;
+    readonly max?: number | undefined;
+    readonly min?: number | undefined;
+    readonly step?: number | undefined;
+  },
+): number {
+  const clamped = clampNumericValue(value, options.min, options.max);
+  if (options.integer) {
+    return Math.round(clamped);
+  }
+  const step = options.step;
+  if (!step || !Number.isFinite(step) || step <= 0) {
+    return Number(clamped.toFixed(6));
+  }
+  const precision = Math.min(8, precisionForStep(step));
+  const snapped = Math.round(clamped / step) * step;
+  return Number(snapped.toFixed(precision));
+}
+
 function normalizeColorString(value: ParameterValue): string {
   const candidate = typeof value === "string" ? value : "";
   return HEX_COLOR_PATTERN.test(candidate) ? candidate.toLowerCase() : "#000000";
 }
+
+type NumberDragState = {
+  readonly pointerId: number;
+  readonly startValue: number;
+  readonly startX: number;
+  lastValue: number;
+  moved: boolean;
+};
 
 function NumberDraftInput({
   ariaLabel,
@@ -3776,12 +4039,16 @@ function NumberDraftInput({
   readonly integer?: boolean;
   readonly max?: number | undefined;
   readonly min?: number | undefined;
-  readonly onValueChange: (value: number) => void;
+  readonly onValueChange: (value: number, options?: ParameterChangeOptions) => void;
   readonly step?: number | undefined;
   readonly value: number;
 }) {
   const externalDraft = numberDraftFromValue(value);
+  const inputRef = useRef<HTMLInputElement | null>(null);
+  const dragRef = useRef<NumberDragState | null>(null);
+  const suppressClickRef = useRef(false);
   const [draft, setDraft] = useState(externalDraft);
+  const [dragging, setDragging] = useState(false);
   const [editing, setEditing] = useState(false);
 
   useEffect(() => {
@@ -3790,41 +4057,284 @@ function NumberDraftInput({
     }
   }, [editing, externalDraft]);
 
+  const normalizeValue = useCallback(
+    (nextValue: number) =>
+      normalizeNumericValue(nextValue, {
+        integer,
+        max,
+        min,
+        step,
+      }),
+    [integer, max, min, step],
+  );
+
   const commitDraft = useCallback(
     (nextDraft: string) => {
       const parsed = parseNumberDraft(nextDraft);
       if (parsed === null) {
         return;
       }
-      onValueChange(integer ? Math.round(parsed) : parsed);
+      onValueChange(normalizeValue(parsed));
     },
-    [integer, onValueChange],
+    [normalizeValue, onValueChange],
+  );
+
+  const applyDragValue = useCallback(
+    (nextValue: number, options: ParameterChangeOptions) => {
+      const normalized = normalizeValue(nextValue);
+      const drag = dragRef.current;
+      if (drag && Object.is(drag.lastValue, normalized) && !options.commitTransient) {
+        return;
+      }
+      if (drag) {
+        drag.lastValue = normalized;
+      }
+      setDraft(numberDraftFromValue(normalized));
+      onValueChange(normalized, options);
+    },
+    [normalizeValue, onValueChange],
   );
 
   return (
     <input
+      ref={inputRef}
       aria-label={ariaLabel}
-      type="number"
-      min={min}
-      max={max}
-      step={step}
+      className={`number-draft-input ${dragging ? "number-draft-input-dragging" : ""}`}
+      inputMode={integer ? "numeric" : "decimal"}
+      type="text"
       value={draft}
       onFocus={() => setEditing(true)}
       onBlur={() => {
+        if (dragRef.current) {
+          return;
+        }
         setEditing(false);
         const parsed = parseNumberDraft(draft);
-        setDraft(
-          parsed === null
-            ? externalDraft
-            : numberDraftFromValue(integer ? Math.round(parsed) : parsed),
-        );
+        setDraft(parsed === null ? externalDraft : numberDraftFromValue(normalizeValue(parsed)));
       }}
       onChange={(event) => {
         const nextDraft = event.target.value;
         setDraft(nextDraft);
         commitDraft(nextDraft);
       }}
+      onClick={(event) => {
+        if (!suppressClickRef.current) {
+          return;
+        }
+        event.preventDefault();
+        suppressClickRef.current = false;
+      }}
+      onPointerDown={(event) => {
+        if (event.button !== 0) {
+          return;
+        }
+        event.preventDefault();
+        const startValue = parseNumberDraft(draft) ?? value;
+        dragRef.current = {
+          pointerId: event.pointerId,
+          startValue: normalizeValue(startValue),
+          startX: event.clientX,
+          lastValue: normalizeValue(startValue),
+          moved: false,
+        };
+        event.currentTarget.focus();
+        event.currentTarget.setPointerCapture(event.pointerId);
+      }}
+      onPointerMove={(event) => {
+        const drag = dragRef.current;
+        if (!drag || drag.pointerId !== event.pointerId) {
+          return;
+        }
+        const deltaX = event.clientX - drag.startX;
+        if (!drag.moved && Math.abs(deltaX) < 3) {
+          return;
+        }
+        drag.moved = true;
+        setDragging(true);
+        event.preventDefault();
+        const dragStep = step ?? (integer ? 1 : 0.01);
+        const multiplier = event.shiftKey ? 10 : event.altKey ? 0.1 : 1;
+        applyDragValue(drag.startValue + deltaX * dragStep * multiplier, { transient: true });
+      }}
+      onPointerUp={(event) => {
+        const drag = dragRef.current;
+        if (!drag || drag.pointerId !== event.pointerId) {
+          return;
+        }
+        dragRef.current = null;
+        setDragging(false);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        if (drag.moved) {
+          event.preventDefault();
+          suppressClickRef.current = true;
+          applyDragValue(drag.lastValue, { commitTransient: true });
+          window.setTimeout(() => {
+            suppressClickRef.current = false;
+          }, 0);
+        }
+      }}
+      onPointerCancel={(event) => {
+        const drag = dragRef.current;
+        if (!drag || drag.pointerId !== event.pointerId) {
+          return;
+        }
+        dragRef.current = null;
+        setDragging(false);
+        if (event.currentTarget.hasPointerCapture(event.pointerId)) {
+          event.currentTarget.releasePointerCapture(event.pointerId);
+        }
+        if (drag.moved) {
+          applyDragValue(drag.lastValue, { commitTransient: true });
+        }
+      }}
     />
+  );
+}
+
+function CustomSelect({
+  ariaLabel,
+  onChange,
+  options,
+  value,
+}: {
+  readonly ariaLabel: string;
+  readonly onChange: (value: string) => void;
+  readonly options: readonly string[];
+  readonly value: string;
+}) {
+  const rootRef = useRef<HTMLDivElement | null>(null);
+  const selectedIndex = Math.max(0, options.indexOf(value));
+  const [open, setOpen] = useState(false);
+  const [highlightedIndex, setHighlightedIndex] = useState(selectedIndex);
+
+  useEffect(() => {
+    if (!open) {
+      return;
+    }
+    setHighlightedIndex(selectedIndex);
+    const handlePointerDown = (event: PointerEvent) => {
+      const target = event.target;
+      if (target instanceof window.Node && rootRef.current?.contains(target)) {
+        return;
+      }
+      setOpen(false);
+    };
+    const handleKeyDown = (event: KeyboardEvent) => {
+      if (event.key === "Escape") {
+        setOpen(false);
+      }
+    };
+    window.addEventListener("pointerdown", handlePointerDown);
+    window.addEventListener("keydown", handleKeyDown, true);
+    return () => {
+      window.removeEventListener("pointerdown", handlePointerDown);
+      window.removeEventListener("keydown", handleKeyDown, true);
+    };
+  }, [open, selectedIndex]);
+
+  const commitOption = useCallback(
+    (index: number) => {
+      const nextValue = options[index];
+      if (nextValue === undefined) {
+        return;
+      }
+      onChange(nextValue);
+      setOpen(false);
+    },
+    [onChange, options],
+  );
+
+  const moveHighlight = useCallback(
+    (direction: 1 | -1) => {
+      setHighlightedIndex((current) => {
+        if (options.length === 0) {
+          return 0;
+        }
+        return (current + direction + options.length) % options.length;
+      });
+    },
+    [options.length],
+  );
+
+  return (
+    <div ref={rootRef} className="custom-select">
+      <button
+        type="button"
+        className="custom-select-trigger"
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        aria-label={ariaLabel}
+        onClick={() => setOpen((current) => !current)}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown") {
+            event.preventDefault();
+            if (!open) {
+              setOpen(true);
+            } else {
+              moveHighlight(1);
+            }
+            return;
+          }
+          if (event.key === "ArrowUp") {
+            event.preventDefault();
+            if (!open) {
+              setOpen(true);
+            } else {
+              moveHighlight(-1);
+            }
+            return;
+          }
+          if (event.key === "Home") {
+            event.preventDefault();
+            setOpen(true);
+            setHighlightedIndex(0);
+            return;
+          }
+          if (event.key === "End") {
+            event.preventDefault();
+            setOpen(true);
+            setHighlightedIndex(Math.max(0, options.length - 1));
+            return;
+          }
+          if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            if (open) {
+              commitOption(highlightedIndex);
+            } else {
+              setOpen(true);
+            }
+            return;
+          }
+          if (event.key === "Escape") {
+            event.preventDefault();
+            setOpen(false);
+          }
+        }}
+      >
+        <span>{value}</span>
+        <ChevronDown size={15} />
+      </button>
+      {open ? (
+        <div className="custom-select-menu" role="listbox" aria-label={ariaLabel}>
+          {options.map((option, index) => (
+            <button
+              key={option}
+              type="button"
+              className="custom-select-option"
+              role="option"
+              aria-selected={option === value}
+              data-highlighted={index === highlightedIndex ? "true" : "false"}
+              onPointerEnter={() => setHighlightedIndex(index)}
+              onClick={() => commitOption(index)}
+            >
+              <span>{option}</span>
+            </button>
+          ))}
+        </div>
+      ) : null}
+    </div>
   );
 }
 
@@ -3906,7 +4416,7 @@ function ParameterField({
   readonly hideLabel?: boolean;
   readonly metadata: ParameterMetadata;
   readonly value: ParameterValue;
-  readonly onChange: (value: ParameterValue) => void;
+  readonly onChange: (value: ParameterValue, options?: ParameterChangeOptions) => void;
 }) {
   const label = hideLabel ? null : <ParameterFieldLabel metadata={metadata} />;
   if (metadata.type === "bool") {
@@ -3930,16 +4440,15 @@ function ParameterField({
 
   if (metadata.options && (metadata.type === "quality" || metadata.type === "string")) {
     return (
-      <label className="param-field">
+      <div className="param-field">
         {label}
-        <select value={String(value)} onChange={(event) => onChange(event.target.value)}>
-          {(metadata.options ?? []).map((option) => (
-            <option key={option} value={option}>
-              {option}
-            </option>
-          ))}
-        </select>
-      </label>
+        <CustomSelect
+          ariaLabel={metadata.label}
+          value={String(value)}
+          options={metadata.options}
+          onChange={(nextValue) => onChange(nextValue)}
+        />
+      </div>
     );
   }
 
@@ -3975,11 +4484,11 @@ function ParameterField({
                 max={1}
                 step={0.01}
                 value={keyframe.time}
-                onValueChange={(nextValue) => {
+                onValueChange={(nextValue, options) => {
                   const next = [...keyframes];
                   const current = next[index] ?? { time: 0, value: 0 };
                   next[index] = { ...current, time: nextValue };
-                  onChange(next);
+                  onChange(next, options);
                 }}
               />
               <NumberDraftInput
@@ -3988,11 +4497,11 @@ function ParameterField({
                 max={1}
                 step={0.01}
                 value={keyframe.value}
-                onValueChange={(nextValue) => {
+                onValueChange={(nextValue, options) => {
                   const next = [...keyframes];
                   const current = next[index] ?? { time: 0, value: 0 };
                   next[index] = { ...current, value: nextValue };
-                  onChange(next);
+                  onChange(next, options);
                 }}
               />
             </span>
@@ -4014,10 +4523,10 @@ function ParameterField({
               ariaLabel={`${metadata.label} component ${index + 1}`}
               step={metadata.step ?? 0.1}
               value={Number(tuple[index] ?? 0)}
-              onValueChange={(nextValue) => {
+              onValueChange={(nextValue, options) => {
                 const next = [...tuple] as [number, number, number];
                 next[index] = nextValue;
-                onChange(next);
+                onChange(next, options);
               }}
             />
           ))}
@@ -4038,10 +4547,10 @@ function ParameterField({
               ariaLabel={`${metadata.label} component ${index + 1}`}
               step={metadata.step ?? 0.1}
               value={Number(tuple[index] ?? 0)}
-              onValueChange={(nextValue) => {
+              onValueChange={(nextValue, options) => {
                 const next = [...tuple] as [number, number];
                 next[index] = nextValue;
-                onChange(next);
+                onChange(next, options);
               }}
             />
           ))}
@@ -4060,7 +4569,7 @@ function ParameterField({
         step={metadata.step ?? 0.01}
         value={Number(value)}
         integer={metadata.type === "int"}
-        onValueChange={(next) => onChange(next)}
+        onValueChange={(next, options) => onChange(next, options)}
       />
     </label>
   );
@@ -4114,7 +4623,11 @@ function configurePreviewRendererColor(renderer: PreviewRenderer): void {
   renderer.toneMappingExposure = 1;
 }
 
-function resolvePreviewPixelRatio(renderer: PreviewRenderer, width: number, height: number): number {
+function resolvePreviewPixelRatio(
+  renderer: PreviewRenderer,
+  width: number,
+  height: number,
+): number {
   const pixelRatioCap = renderer.isWebGPURenderer
     ? PREVIEW_WEBGPU_PIXEL_RATIO_CAP
     : PREVIEW_WEBGL_PIXEL_RATIO_CAP;
@@ -4644,8 +5157,11 @@ function PreviewViewport({
   const cameraDragRef = useRef<PreviewCameraDragState | null>(null);
   const effectRef = useRef<WispySmokeVFX | null>(null);
   const paramsRef = useRef(params);
+  const previewLabelRef = useRef("Starting preview");
+  const previewStartMsRef = useRef(performance.now());
   const runtimeConfigRef = useRef(runtimeConfig);
   const rendererRef = useRef<PreviewRenderer | null>(null);
+  const sceneRef = useRef<THREE.Scene | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
   const webgpu = useMemo(() => getWebGPUFeatureStatus(), []);
@@ -4673,6 +5189,9 @@ function PreviewViewport({
       rendererRef.current = renderer;
 
       const scene = new THREE.Scene();
+      sceneRef.current = scene;
+      previewLabelRef.current = label;
+      previewStartMsRef.current = performance.now();
       const camera = new THREE.PerspectiveCamera(PREVIEW_CAMERA_FOV, 1, 0.1, 80);
       camera.position.set(1.15, 3.55, 12.8);
       camera.lookAt(0, 3.15, 0);
@@ -4726,7 +5245,8 @@ function PreviewViewport({
         const delta = Math.min(0.05, rawDelta);
         const sampleDelta = rawDelta > 0.5 ? 0 : rawDelta;
         last = now;
-        effect.update(delta, now / 1000);
+        const activeEffect = effectRef.current;
+        activeEffect?.update(delta, (now - previewStartMsRef.current) / 1000);
         if (cameraRenderedStateRef.current && cameraDesiredStateRef.current) {
           updatePreviewCameraSmoothing(
             camera,
@@ -4743,7 +5263,7 @@ function PreviewViewport({
         if (statsElapsed >= 0.25) {
           const averageFrameSeconds = statsElapsed / statsFrames;
           onTelemetry({
-            ...effect.getStats(),
+            ...(activeEffect?.getStats() ?? EMPTY_PREVIEW_STATS),
             fps: Math.round(statsFrames / Math.max(statsElapsed, 0.001)),
             frameMs: averageFrameSeconds * 1000,
             webgpuLabel: label,
@@ -4791,6 +5311,7 @@ function PreviewViewport({
       cameraRenderedStateRef.current = null;
       rendererRef.current = null;
       effectRef.current = null;
+      sceneRef.current = null;
     };
   }, [onTelemetry, webgpu.supported]);
 
@@ -4799,6 +5320,35 @@ function PreviewViewport({
     runtimeConfigRef.current = runtimeConfig;
     effectRef.current?.setParamsAndRuntimeConfig(params, runtimeConfig);
   }, [params, runtimeConfig]);
+
+  const resetPreviewEffect = useCallback(() => {
+    const scene = sceneRef.current;
+    const renderer = rendererRef.current;
+    if (!scene || !renderer) {
+      return;
+    }
+
+    const previousEffect = effectRef.current;
+    if (previousEffect) {
+      scene.remove(previousEffect.object3D);
+      previousEffect.dispose();
+    }
+
+    previewStartMsRef.current = performance.now();
+    const nextEffect = new WispySmokeVFX({
+      ...paramsRef.current,
+      config: runtimeConfigRef.current,
+      renderer,
+    });
+    scene.add(nextEffect.object3D);
+    effectRef.current = nextEffect;
+    onTelemetry({
+      ...EMPTY_PREVIEW_STATS,
+      ...nextEffect.getStats(),
+      webgpuLabel: previewLabelRef.current,
+      webgpuSupported: webgpu.supported,
+    });
+  }, [onTelemetry, webgpu.supported]);
 
   const endPreviewNavigation = useCallback((event?: React.PointerEvent<HTMLCanvasElement>) => {
     const drag = cameraDragRef.current;
@@ -4920,16 +5470,28 @@ function PreviewViewport({
           isNavigating ? "preview-panel-navigating" : ""
         }`}
       >
-        <button
-          type="button"
-          className="icon-button preview-maximize-button"
-          title={isMaximized ? "Minimize preview" : "Maximize preview"}
-          aria-label={isMaximized ? "Minimize preview" : "Maximize preview"}
-          onPointerDown={(event) => event.stopPropagation()}
-          onClick={() => setIsMaximized((current) => !current)}
-        >
-          {isMaximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
-        </button>
+        <div className="preview-controls">
+          <button
+            type="button"
+            className="icon-button preview-control-button"
+            title="Restart preview"
+            aria-label="Restart preview"
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={resetPreviewEffect}
+          >
+            <RotateCcw size={15} />
+          </button>
+          <button
+            type="button"
+            className="icon-button preview-control-button"
+            title={isMaximized ? "Minimize preview" : "Maximize preview"}
+            aria-label={isMaximized ? "Minimize preview" : "Maximize preview"}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => setIsMaximized((current) => !current)}
+          >
+            {isMaximized ? <Minimize2 size={15} /> : <Maximize2 size={15} />}
+          </button>
+        </div>
         <canvas
           ref={canvasRef}
           aria-label="Wispy Smoke preview"

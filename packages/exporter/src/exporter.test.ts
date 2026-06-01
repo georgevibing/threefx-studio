@@ -44,14 +44,14 @@ describe("@threefx/exporter", () => {
     expect(exported.mainClassSource).toContain("createJacobiNode");
     expect(exported.mainClassSource).toContain("createProjectionNode");
     expect(exported.mainClassSource).toContain("createPackNode");
-    expect(exported.mainClassSource).toContain("Beer");
+    expect(exported.mainClassSource).toContain("const beer");
     expect(exported.mainClassSource).toContain("absorption");
     expect(exported.mainClassSource).toContain("scattering");
     expect(exported.mainClassSource).toContain("detailScale");
     expect(exported.mainClassSource).toContain("sourceTemperature");
     expect(exported.mainClassSource).toContain("emissionColor");
-    expect(exported.mainClassSource).toContain("bakedLight");
     expect(exported.mainClassSource).toContain("selfShadow");
+    expect(exported.mainClassSource).toContain("valueNoise3D");
     expect(exported.mainClassSource).toContain("resolveEffectiveGridResolution");
     expect(exported.mainClassSource).not.toContain("triNoise3D");
     expect(exported.mainClassSource).not.toContain("Data3DTexture");
@@ -65,7 +65,8 @@ describe("@threefx/exporter", () => {
     expect(exported.mainClassSource).toContain("update(deltaSeconds");
     expect(exported.usageSnippet).toContain("scene.add(smoke.object3D)");
     expect(exported.usageSnippet).toContain('gridResolution: "medium"');
-    expect(exported.usageSnippet).toContain('emissionColor: "#eef8fc"');
+    expect(exported.usageSnippet).toContain('emissionColor: "#cfd8dc"');
+    expect(exported.usageSnippet).toContain('blendMode: "additive"');
     expect(exported.usageSnippet).toContain("sourceGlowEnabled: false");
     expect(exported.usageSnippet).toContain("renderStepScale: 1");
     expect(exported.usageSnippet).toContain("pressureIterations: 10");

@@ -99,7 +99,7 @@ describe("@threefx/core", () => {
 
     const spawnRatePort = registry.get("emitter.sphere")?.ports.find((port) => port.id === "spawnRate");
     expect(spawnRatePort).toMatchObject({
-      defaultValue: 960,
+      defaultValue: 820,
       direction: "input",
       effectParameterId: "spawnRate",
       group: "Emission",

@@ -64,11 +64,11 @@ describe("@threefx/exporter", () => {
     expect(exported.mainClassSource).not.toContain("warmGlow");
     expect(exported.mainClassSource).toContain("update(deltaSeconds");
     expect(exported.usageSnippet).toContain("scene.add(smoke.object3D)");
-    expect(exported.usageSnippet).toContain('gridResolution: "high"');
+    expect(exported.usageSnippet).toContain('gridResolution: "medium"');
     expect(exported.usageSnippet).toContain('emissionColor: "#eef8fc"');
     expect(exported.usageSnippet).toContain("sourceGlowEnabled: false");
-    expect(exported.usageSnippet).toContain("renderStepScale: 1.7");
-    expect(exported.usageSnippet).toContain("pressureIterations: 20");
+    expect(exported.usageSnippet).toContain("renderStepScale: 1");
+    expect(exported.usageSnippet).toContain("pressureIterations: 10");
     expect(exported.usageSnippet).toContain('debugView: "final"');
     expect(exported.usageSnippet).not.toContain("#ff8800");
   });

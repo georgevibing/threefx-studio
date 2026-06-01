@@ -155,7 +155,7 @@ const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph:v1";
 const editorPersistence = createLocalStorageEditorPersistence(LOCAL_STORAGE_KEY);
 const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
   activeDebugView: "final",
-  advectionMode: "maccormack",
+  advectionMode: "trilinear",
   backend: "compat",
   diffusionIterations: 0,
   emitterCount: 0,
@@ -208,8 +208,10 @@ const AUTO_LAYOUT_KIND_ORDER: Record<string, number> = {
   quality: 9,
   parameter: 10,
 };
-const PREVIEW_WEBGPU_PIXEL_RATIO_CAP = 1.15;
+const PREVIEW_WEBGPU_PIXEL_RATIO_CAP = 1;
 const PREVIEW_WEBGL_PIXEL_RATIO_CAP = 2;
+const PREVIEW_WEBGPU_INTERNAL_PIXEL_BUDGET = 1_150_000;
+const PREVIEW_WEBGL_INTERNAL_PIXEL_BUDGET = 2_000_000;
 const PREVIEW_UPDATE_DEBOUNCE_MS = 140;
 const DEFAULT_FLOW_VIEWPORT: Viewport = { x: 120, y: 80, zoom: 0.82 };
 
@@ -3532,6 +3534,20 @@ type PreviewRenderer = {
 const PREVIEW_WEBGPU_INIT_TIMEOUT_MS = 6000;
 const CANVAS_FALLBACK_SMOKE_LAYERS = 28;
 
+function resolvePreviewPixelRatio(renderer: PreviewRenderer, width: number, height: number): number {
+  const pixelRatioCap = renderer.isWebGPURenderer
+    ? PREVIEW_WEBGPU_PIXEL_RATIO_CAP
+    : PREVIEW_WEBGL_PIXEL_RATIO_CAP;
+  const internalPixelBudget = renderer.isWebGPURenderer
+    ? PREVIEW_WEBGPU_INTERNAL_PIXEL_BUDGET
+    : PREVIEW_WEBGL_INTERNAL_PIXEL_BUDGET;
+  const devicePixelRatio = Math.max(1, window.devicePixelRatio || 1);
+  const cappedDeviceRatio = Math.min(devicePixelRatio, pixelRatioCap);
+  const budgetRatio = Math.sqrt(internalPixelBudget / Math.max(1, width * height));
+
+  return Math.max(0.55, Math.min(cappedDeviceRatio, budgetRatio));
+}
+
 async function waitForPreviewWebGPUInit(renderer: PreviewRenderer): Promise<boolean> {
   const init = renderer.init?.();
   if (!init) {
@@ -3804,9 +3820,9 @@ type PreviewCameraState = {
   readonly target: THREE.Vector3;
 };
 
-const PREVIEW_CAMERA_FOV = 36;
+const PREVIEW_CAMERA_FOV = 44;
 const PREVIEW_CAMERA_MIN_DISTANCE = 1.35;
-const PREVIEW_CAMERA_MAX_DISTANCE = 11;
+const PREVIEW_CAMERA_MAX_DISTANCE = 16;
 const PREVIEW_POINTER_ORBIT_SPEED = 0.012;
 const PREVIEW_POINTER_ZOOM_SPEED = 0.01;
 const PREVIEW_WHEEL_ZOOM_SPEED = 0.001;
@@ -3814,7 +3830,7 @@ const PREVIEW_PITCH_EPSILON = 0.01;
 const PREVIEW_CAMERA_NAVIGATION_RATE = 18;
 
 function createPreviewCameraState(camera: THREE.PerspectiveCamera): PreviewCameraState {
-  const target = new THREE.Vector3(0, 1.95, 0);
+  const target = new THREE.Vector3(0, 3.15, 0);
   const spherical = new THREE.Spherical().setFromVector3(
     new THREE.Vector3().subVectors(camera.position, target),
   );
@@ -4039,21 +4055,13 @@ function PreviewViewport({
       }
       started = true;
       window.clearTimeout(startupFallback);
-      renderer.setPixelRatio(
-        Math.min(
-          window.devicePixelRatio,
-          renderer.isWebGPURenderer
-            ? PREVIEW_WEBGPU_PIXEL_RATIO_CAP
-            : PREVIEW_WEBGL_PIXEL_RATIO_CAP,
-        ),
-      );
       renderer.setClearColor("#06080d", 1);
       rendererRef.current = renderer;
 
       const scene = new THREE.Scene();
       const camera = new THREE.PerspectiveCamera(PREVIEW_CAMERA_FOV, 1, 0.1, 80);
-      camera.position.set(1.25, 2.2, 5.25);
-      camera.lookAt(0, 2.2, 0);
+      camera.position.set(1.15, 3.55, 12.8);
+      camera.lookAt(0, 3.15, 0);
       const cameraDesiredState = createPreviewCameraState(camera);
       const cameraRenderedState = clonePreviewCameraState(cameraDesiredState);
       cameraRef.current = camera;
@@ -4089,6 +4097,7 @@ function PreviewViewport({
         const rect = canvas.getBoundingClientRect();
         const width = Math.max(1, Math.floor(rect.width));
         const height = Math.max(1, Math.floor(rect.height));
+        renderer.setPixelRatio(resolvePreviewPixelRatio(renderer, width, height));
         renderer.setSize(width, height, false);
         camera.aspect = width / height;
         camera.zoom = camera.aspect < 1 ? Math.max(0.66, Math.min(1, camera.aspect * 1.1)) : 1;

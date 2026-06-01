@@ -134,7 +134,7 @@ type Texture3DNode = ReturnType<typeof texture3D>;
 type Vec4StorageBuffer = StorageBufferNodeBase<"vec4">;
 type FloatStorageBuffer = StorageBufferNodeBase<"float">;
 
-const SOURCE_DENSITY_RATE_SCALE = 0.036;
+const SOURCE_DENSITY_RATE_SCALE = 0.032;
 const SOURCE_VELOCITY_INJECTION_SCALE = 4.8;
 
 interface SmokeRaymarchArgs {
@@ -174,6 +174,9 @@ const QUALITY_RANK: Record<WispySmokeVFXParams["quality"], number> = {
   high: 2,
   cinematic: 3,
 };
+const MAX_RENDER_STEP_SCALE = 1.35;
+const MAX_SHADOW_SAMPLES = 16;
+const MAX_PRESSURE_ITERATIONS = 40;
 
 const COMPAT_VERTEX_SHADER = `
 attribute float aAlpha;
@@ -356,7 +359,8 @@ const VOLUME_RAYMARCH = Fn(
       const activeDensityMask = nodeSmoothstep(0.04, 0.22, gridDensity).clamp(0, 1);
       const temperature = float(packed.g).toVar();
       const speed = float(packed.b).mul(8).max(flowMagnitude).clamp(0, 8).toVar();
-      const simulationDetail = float(packed.a).max(flowPacked.a).toVar();
+      const smokeAge = float(packed.a).clamp(0, 1).toVar();
+      const simulationDetail = float(flowPacked.a).toVar();
       const bakedLight = float(0.74)
         .add(temperature.mul(0.22))
         .add(speed.mul(0.035))
@@ -429,7 +433,11 @@ const VOLUME_RAYMARCH = Fn(
       }
       const detailMod = detail.sub(0.38).mul(detailStrength).add(1).clamp(0.05, 2.8);
       const floorFade = nodeSmoothstep(0.015, 0.095, heightRamp);
-      const ceilingFade = nodeSmoothstep(0.88, 0.998, heightRamp).oneMinus().clamp(0, 1);
+      const ceilingFade = nodeSmoothstep(
+        0.88,
+        0.995,
+        heightRamp.add(detail.sub(0.5).mul(0.08)),
+      ).oneMinus().clamp(0, 1);
       const sideEdge = uvw.x
         .min(uvw.z)
         .min(uvw.x.oneMinus())
@@ -632,7 +640,7 @@ const VOLUME_RAYMARCH = Fn(
         .mul(filamentGate)
         .clamp(0, 1);
       const looseFilamentGate = nodeSmoothstep(0.055, 0.9, heightRamp)
-        .mul(nodeSmoothstep(0.96, 0.998, heightRamp).oneMinus())
+        .mul(nodeSmoothstep(0.94, 0.998, heightRamp).oneMinus())
         .mul(taperMask)
         .mul(activeDensityMask.max(simulationDetail.mul(0.82)))
         .clamp(0, 1);
@@ -776,7 +784,7 @@ const VOLUME_RAYMARCH = Fn(
         .add(pathlineWisps.mul(0.04))
         .mul(upperWispWeight.mul(0.5).add(0.12))
         .mul(gridDensity.add(0.16).clamp(0, 0.94))
-        .mul(1.55)
+        .mul(1.15)
         .mul(activeDensityMask)
         .mul(taperMask);
       const subgridFilaments = gridDensity
@@ -795,7 +803,7 @@ const VOLUME_RAYMARCH = Fn(
         .mul(nodeSmoothstep(0.965, 0.998, heightRamp).oneMinus())
         .mul(activeDensityMask)
         .mul(taperMask)
-        .mul(1.05);
+        .mul(0.82);
       const softWispCarrier = nodeSmoothstep(
         0.32,
         0.9,
@@ -816,8 +824,8 @@ const VOLUME_RAYMARCH = Fn(
         .mul(floorFade)
         .mul(sideFade)
         .mul(mix(float(0.32), float(0.82), upperWispWeight))
-        .mul(0.58)
-        .clamp(0, 0.72);
+        .mul(0.22)
+        .clamp(0, 0.34);
       const density = rawOpticalDensity
         .add(filamentLift)
         .add(subgridFilaments)
@@ -925,9 +933,9 @@ const VOLUME_RAYMARCH = Fn(
         .mul(sideFade)
         .mul(risingWispSheets)
         .mul(sheetLift)
-        .mul(mix(float(0.52), float(1.42), upperWispWeight))
+        .mul(mix(float(0.48), float(1.12), upperWispWeight))
         .mul(mix(float(0.65), float(1.28), gradientRim.max(simulationDetail.mul(0.74))))
-        .mul(0.38)
+        .mul(0.34)
         .clamp(0, 0.36);
       const smoothBodyLimit = mix(
         float(1),
@@ -973,9 +981,9 @@ const VOLUME_RAYMARCH = Fn(
         .mul(floorFade)
         .mul(ceilingFade)
         .mul(sideFade)
-        .mul(mix(float(0.46), float(1.42), upperWispWeight))
-        .mul(0.32)
-        .clamp(0, 0.46);
+        .mul(mix(float(0.42), float(1.08), upperWispWeight))
+        .mul(0.5)
+        .clamp(0, 0.68);
       density.assign(density.max(proceduralFilamentDensity).clamp(0, 1.38));
       const lacePreserve = wispVisibility
         .max(waveletSheets.mul(0.82))
@@ -988,37 +996,309 @@ const VOLUME_RAYMARCH = Fn(
         .oneMinus()
         .mul(nodeSmoothstep(authoredPlumeRadius.mul(0.08), authoredPlumeRadius.mul(0.7), radialFromCenter).oneMinus())
         .clamp(0, 1);
-      const smoothInteriorMask = nodeSmoothstep(0.13, 0.58, gridDensity)
-        .mul(nodeSmoothstep(0.04, 0.88, heightRamp))
-        .mul(lacePreserve.oneMinus())
+      const smoothInteriorMask = nodeSmoothstep(0.09, 0.34, gridDensity)
+        .mul(nodeSmoothstep(0.035, 0.94, heightRamp))
+        .mul(lacePreserve.oneMinus().mul(0.82).add(waveletEdge.oneMinus().mul(0.18)))
         .clamp(0, 1);
       density.assign(
         density
-          .mul(mix(float(1), float(0.42), smoothInteriorMask))
-          .mul(mix(float(1), float(0.22), lowerStemMask.mul(lacePreserve.oneMinus())))
+          .mul(mix(float(1), float(0.16), smoothInteriorMask))
+          .mul(mix(float(1), float(0.58), lowerStemMask.mul(lacePreserve.oneMinus())))
           .max(proceduralFilamentDensity.mul(mix(float(0.7), float(1.28), lacePreserve)))
           .clamp(0, 1.26),
       );
       const softInteriorErosion = nodeSmoothstep(
-        0.68,
-        1.18,
+        0.38,
+        0.92,
         detail
-          .mul(0.34)
-          .add(billowRidge.mul(0.34))
-          .add(ribbonRidge.mul(0.18))
-          .add(strandRidge.mul(0.16))
-          .add(gradientRim.mul(0.34))
-          .add(simulationDetail.mul(0.12)),
+          .mul(0.28)
+          .add(billowRidge.mul(0.24))
+          .add(ribbonRidge.mul(0.32))
+          .add(strandRidge.mul(0.34))
+          .add(waveletSheets.mul(0.32))
+          .add(waveletEdge.mul(0.28))
+          .add(gradientRim.mul(0.46))
+          .add(simulationDetail.mul(0.18)),
       ).clamp(0, 1);
-      const denseInteriorErosionMask = nodeSmoothstep(0.12, 0.5, gridDensity)
+      const denseInteriorErosionMask = nodeSmoothstep(0.08, 0.36, gridDensity)
         .mul(nodeSmoothstep(0.055, 0.9, heightRamp))
+        .mul(lacePreserve.oneMinus().mul(0.75).add(waveletEdge.oneMinus().mul(0.25)))
         .clamp(0, 1);
       const softErosionMultiplier = mix(
         float(1),
-        mix(float(0.08), float(1.08), softInteriorErosion),
-        denseInteriorErosionMask.mul(0.92),
-      ).clamp(0.08, 1.08);
+        mix(float(0.012), float(1.1), softInteriorErosion),
+        denseInteriorErosionMask.mul(0.99),
+      ).clamp(0.025, 1.12);
       density.assign(density.mul(softErosionMultiplier).clamp(0, 1.24));
+      const upperSheetTrim = nodeSmoothstep(0.48, 0.86, heightRamp)
+        .oneMinus()
+        .mul(0.62)
+        .add(0.38)
+        .clamp(0.38, 1);
+      const volumetricSheetMask = nodeSmoothstep(
+        0.18,
+        0.58,
+        ribbonRidge
+          .mul(strandRidge)
+          .mul(0.74)
+          .add(waveletSheets.mul(billowRidge).mul(0.62))
+          .add(fineFilaments.mul(strandRidge).mul(0.48))
+          .add(waveletEdge.mul(0.18))
+          .add(simulationDetail.mul(0.1)),
+      ).clamp(0, 1);
+      const transparentBody = gridDensity
+        .mul(baseDensity)
+        .mul(densityPresence)
+        .mul(authoredPlumeEnvelope.mul(0.96).add(0.02))
+        .mul(taperMask)
+        .mul(floorFade)
+        .mul(ceilingFade)
+        .mul(sideFade)
+        .mul(
+          mix(
+            float(0.003),
+            float(0.065),
+            billowShell.max(gradientRim.mul(0.62)).max(simulationDetail.mul(0.38)),
+          ),
+        )
+        .mul(mix(float(0.92), float(0.58), upperWispWeight))
+        .mul(upperSheetTrim)
+        .clamp(0, 0.08);
+      const liftedSheets = gridDensity
+        .add(0.024)
+        .mul(baseDensity)
+        .mul(volumetricSheetMask)
+        .mul(activeDensityMask)
+        .mul(authoredPlumeEnvelope)
+        .mul(floorFade)
+        .mul(ceilingFade)
+        .mul(sideFade)
+        .mul(mix(float(0.34), float(0.82), upperWispWeight))
+        .mul(upperSheetTrim)
+        .clamp(0, 0.76);
+      const strayWisps = gridDensity
+        .add(0.012)
+        .mul(baseDensity)
+        .mul(fineFilaments.mul(strandRidge).max(ribbonRidge.mul(waveletSheets)))
+        .mul(activeDensityMask)
+        .mul(taperMask)
+        .mul(nodeSmoothstep(0.08, 0.94, heightRamp))
+        .mul(floorFade)
+        .mul(ceilingFade)
+        .mul(sideFade)
+        .mul(0.34)
+        .clamp(0, 0.42);
+      const upperVeil = gridDensity
+        .add(0.018)
+        .mul(baseDensity)
+        .mul(authoredPlumeEnvelope)
+        .mul(
+          ribbonRidge
+            .mul(strandRidge)
+            .mul(0.48)
+            .add(billowRidge.mul(waveletSheets).mul(0.34))
+            .add(fineFilaments.mul(0.22)),
+        )
+        .mul(nodeSmoothstep(0.16, 0.92, heightRamp))
+        .mul(nodeSmoothstep(0.96, 0.998, heightRamp).oneMinus())
+        .mul(floorFade)
+        .mul(ceilingFade)
+        .mul(sideFade)
+        .mul(upperSheetTrim)
+        .mul(0.08)
+        .clamp(0, 0.32);
+      density.assign(
+        transparentBody
+          .mul(0.08)
+          .add(liftedSheets.mul(0.055))
+          .add(strayWisps.mul(1.72))
+          .add(upperVeil.mul(0.24))
+          .mul(softErosionMultiplier.mul(0.86).add(0.14))
+          .add(proceduralFilamentDensity.mul(1.42))
+          .clamp(0, 0.86),
+      );
+      density.assign(
+        density
+          .max(
+            transparentBody
+              .mul(0.04)
+              .add(liftedSheets.mul(0.035))
+              .add(strayWisps.mul(0.82))
+              .add(upperVeil.mul(0.12))
+              .clamp(0, 0.36),
+          )
+          .clamp(0, 0.86),
+      );
+      const finalVolumeFade = nodeSmoothstep(0.015, 0.08, heightRamp)
+        .mul(nodeSmoothstep(0.86, 0.995, heightRamp.add(detail.sub(0.5).mul(0.06))).oneMinus())
+        .clamp(0, 1);
+      density.assign(density.mul(finalVolumeFade).clamp(0, 0.92));
+      const columnInterior = nodeSmoothstep(0.035, 0.86, heightRamp)
+        .mul(
+          nodeSmoothstep(authoredPlumeRadius.mul(0.02), authoredPlumeRadius.mul(0.86), radialFromCenter)
+            .oneMinus(),
+        )
+        .mul(nodeSmoothstep(0.04, 0.42, gridDensity))
+        .clamp(0, 1);
+      const interiorFilaments = risingWispSheets
+        .max(waveletEdge)
+        .max(fineFilaments.mul(strandRidge))
+        .max(ribbonRidge.mul(0.48))
+        .max(gradientRim.mul(0.52))
+        .clamp(0, 1);
+      density.assign(
+        density
+          .mul(mix(float(1), mix(float(0.035), float(1.06), interiorFilaments), columnInterior.mul(0.96)))
+          .clamp(0, 0.92),
+      );
+      const upperBodyErosion = nodeSmoothstep(0.2, 0.56, heightRamp)
+        .mul(nodeSmoothstep(0.04, 0.26, gridDensity))
+        .clamp(0, 1);
+      const upperFilamentPreserve = waveletEdge.mul(0.45)
+        .max(fineFilaments.mul(strandRidge))
+        .max(ribbonRidge.mul(strandRidge).mul(0.78))
+        .max(pathlineWisps.mul(0.32))
+        .max(gradientRim.mul(0.82))
+        .clamp(0, 1);
+      const capBulkErosion = nodeSmoothstep(0.24, 0.82, heightRamp)
+        .mul(nodeSmoothstep(0.12, 0.42, gridDensity))
+        .mul(
+          fineFilaments
+            .max(strandRidge.mul(ribbonRidge))
+            .max(waveletEdge)
+            .max(gradientRim.mul(0.72))
+            .oneMinus(),
+        )
+        .clamp(0, 1);
+      density.assign(
+        density
+          .mul(mix(float(1), mix(float(0.018), float(0.92), upperFilamentPreserve), upperBodyErosion))
+          .mul(mix(float(1), float(0.18), capBulkErosion))
+          .clamp(0, 0.92),
+      );
+      const freshSourceFade = mix(float(0.72), float(1), nodeSmoothstep(0.035, 0.24, smokeAge))
+        .mul(nodeSmoothstep(0.66, 0.92, heightRamp).oneMinus().mul(0.42).add(0.58))
+        .clamp(0.5, 1);
+      density.assign(density.mul(freshSourceFade).clamp(0, 0.92));
+      const agedFilamentPreserve = gradientRim
+        .max(fineFilaments.mul(strandRidge).mul(0.96))
+        .max(ribbonRidge.mul(strandRidge).mul(0.82))
+        .max(pathlineWisps.mul(0.42))
+        .max(waveletEdge.mul(0.38))
+        .clamp(0, 1);
+      const oldUpperSmoke = nodeSmoothstep(0.22, 0.72, smokeAge)
+        .mul(nodeSmoothstep(0.18, 0.78, heightRamp))
+        .clamp(0, 1);
+      density.assign(
+        density
+          .mul(mix(float(1), mix(float(0.028), float(0.96), agedFilamentPreserve), oldUpperSmoke))
+          .clamp(0, 0.92),
+      );
+      const finalLace = nodeSmoothstep(
+        0.34,
+        0.92,
+        strandRidge
+          .mul(0.48)
+          .add(ribbonRidge.mul(0.42))
+          .add(fineFilaments.mul(0.34))
+          .add(billowShell.mul(0.24))
+          .add(gradientRim.mul(0.42))
+          .add(pathlineWisps.mul(0.12)),
+      ).clamp(0, 1);
+      density.assign(
+        density
+          .mul(
+            mix(
+              float(1),
+              mix(float(0.08), float(1.34), finalLace),
+              nodeSmoothstep(0.12, 0.88, heightRamp).mul(0.92),
+            ),
+          )
+          .clamp(0, 0.92),
+      );
+      const upperBulkRegion = nodeSmoothstep(0.18, 0.72, heightRamp)
+        .mul(nodeSmoothstep(0.055, 0.24, gridDensity))
+        .clamp(0, 1);
+      const upperSheetPreserve = nodeSmoothstep(
+        0.48,
+        0.9,
+        waveletEdge
+          .mul(0.36)
+          .add(gradientRim.mul(0.34))
+          .add(ribbonRidge.mul(strandRidge).mul(risingWispSheets).mul(0.52))
+          .add(waveletSheets.mul(billowRidge).mul(0.42))
+          .add(pathlineWisps.mul(0.48))
+          .add(loosePathlineWisps.mul(0.28)),
+      )
+        .clamp(0, 1);
+      density.assign(
+        density
+          .mul(
+            mix(
+              float(1),
+              mix(float(0.006), float(1.24), upperSheetPreserve),
+              upperBulkRegion.mul(0.98),
+            ),
+          )
+          .clamp(0, 0.92),
+      );
+      const airySheetGate = nodeSmoothstep(
+        0.36,
+        0.88,
+        strandRidge
+          .mul(0.46)
+          .add(ribbonRidge.mul(0.42))
+          .add(billowShell.mul(0.38))
+          .add(waveletEdge.mul(0.36))
+          .add(gradientRim.mul(0.4))
+          .add(simulationDetail.mul(0.34))
+          .add(pathlineWisps.mul(0.18)),
+      ).clamp(0, 1);
+      const resolvedDensity = gridDensity
+        .mul(baseDensity)
+        .mul(floorFade)
+        .mul(ceilingFade)
+        .mul(sideFade)
+        .mul(taperMask)
+        .mul(mix(float(0.006), float(1.35), airySheetGate))
+        .mul(mix(float(0.18), float(1), upperSheetPreserve.max(gradientRim.mul(0.75))))
+        .mul(mix(float(0.72), float(1.08), nodeSmoothstep(0.05, 0.22, heightRamp)))
+        .mul(0.2)
+        .clamp(0, 0.72);
+      const resolvedLowerColumn = gridDensity
+        .mul(baseDensity)
+        .mul(floorFade)
+        .mul(sideFade)
+        .mul(lowerCoreWeight)
+        .mul(mix(float(0.32), float(0.94), airySheetGate.max(gradientRim)))
+        .mul(0.17)
+        .clamp(0, 0.34);
+      const subgridPlumeCarrier = authoredPlumeEnvelope
+        .mul(floorFade)
+        .mul(ceilingFade)
+        .mul(sideFade)
+        .mul(nodeSmoothstep(0.035, 0.92, heightRamp))
+        .mul(nodeSmoothstep(0.965, 0.998, heightRamp).oneMinus())
+        .mul(gridDensity.mul(0.72).add(temperature.mul(0.24)).add(simulationDetail.mul(0.4)).add(0.1))
+        .clamp(0, 1);
+      const subgridRibbonDensity = subgridPlumeCarrier
+        .mul(baseDensity)
+        .mul(
+          pathlineWisps
+            .mul(0.46)
+            .add(loosePathlineWisps.mul(0.34))
+            .add(risingWispSheets.mul(0.42))
+            .add(fineFilaments.mul(strandRidge).mul(0.38))
+            .add(ribbonRidge.mul(waveletSheets).mul(0.28))
+            .add(gradientRim.mul(0.18))
+            .clamp(0, 1.35),
+        )
+        .mul(mix(float(0.72), float(1.22), upperWispWeight))
+        .mul(0.34)
+        .clamp(0, 0.48);
+      density.assign(resolvedDensity.max(resolvedLowerColumn).max(subgridRibbonDensity).clamp(0, 0.74));
+      const densityCutoff = nodeSmoothstep(0.004, 0.034, density).clamp(0, 1);
+      density.assign(density.mul(densityCutoff).clamp(0, 0.92));
 
       const shadowA = texture.sample(uvw.add(lightDir.mul(0.035)).clamp(0.001, 0.999)).r;
       const shadowB = texture.sample(uvw.add(lightDir.mul(0.075)).clamp(0.001, 0.999)).r;
@@ -1050,10 +1330,17 @@ const VOLUME_RAYMARCH = Fn(
         .mul(alphaStructure)
         .mul(mix(float(0.42), float(1.22), structuralPresence.max(risingWispSheets).max(gradientRim.mul(0.72))))
         .mul(mix(float(1), float(0.54), smoothInteriorMask))
-        .mul(mix(float(1), float(0.36), lowerStemMask.mul(lacePreserve.oneMinus())))
+        .mul(mix(float(1), float(0.68), lowerStemMask.mul(lacePreserve.oneMinus())))
+        .mul(mix(float(1), mix(float(0.12), float(1.08), agedFilamentPreserve), oldUpperSmoke))
         .mul(softErosionMultiplier)
-        .clamp(0, 0.058)
+        .clamp(0, 0.006)
         .toVar();
+      const alphaSheetBreakup = mix(
+        float(0.16),
+        float(1.1),
+        volumetricSheetMask.max(strayWisps.mul(2.2)).max(upperVeil.mul(2.4)).clamp(0, 1),
+      );
+      sampleAlpha.assign(sampleAlpha.mul(alphaSheetBreakup).clamp(0, 0.008));
       const heightScatter = nodeSmoothstep(0.08, 0.9, heightRamp).mul(0.38).add(0.78);
       const edgeScatter = float(0.82)
         .add(gradientRim.mul(0.62))
@@ -1068,11 +1355,11 @@ const VOLUME_RAYMARCH = Fn(
       const smokeTone = mix(heightTone, denseTone, density.mul(0.2).clamp(0, 0.58));
       const smokeScatter = smokeTone
         .mul(scattering)
-        .mul(0.96)
+        .mul(0.78)
         .mul(heightScatter)
         .mul(edgeScatter)
         .mul(selfShadow)
-        .mul(bakedLight.mul(0.52).add(1.16));
+        .mul(bakedLight.mul(0.42).add(0.92));
       const thermalEmission = emissionColor.rgb
         .mul(emissionIntensity)
         .mul(temperature)
@@ -1374,7 +1661,10 @@ function resolveEffectiveConfigGridResolution(
 
 function resolveConfigRenderSteps(config: WispySmokeRuntimeConfig): number {
   const profile = resolveQualityProfile(resolveEffectiveConfigGridResolution(config));
-  return Math.max(16, Math.round(profile.maxRaySteps * config.render.renderStepScale));
+  return Math.max(
+    16,
+    Math.round(profile.maxRaySteps * clamp(config.render.renderStepScale, 0.1, MAX_RENDER_STEP_SCALE)),
+  );
 }
 
 class FluidGrid3D {
@@ -1574,7 +1864,7 @@ class FluidGrid3D {
     this.uniforms.residenceRate.value = 1 / Math.max(0.25, params.lifetime);
     this.uniforms.riseSpeed.value = force.riseSpeed;
     this.uniforms.scattering.value = config.render.scattering;
-    this.uniforms.shadowSamples.value = config.render.shadowQuality;
+    this.uniforms.shadowSamples.value = clamp(config.render.shadowQuality, 0, MAX_SHADOW_SAMPLES);
     this.uniforms.shadowStrength.value = config.render.shadowStrength;
     this.uniforms.smokeColor.value.set(config.render.smokeColor);
     this.uniforms.sourceTemperature.value = params.sourceTemperature;
@@ -1876,7 +2166,7 @@ class FluidGrid3D {
         .mul(0.78)
         .add(0.46)
         .clamp(0.28, 1.24);
-      const pulseGate = nodeSmoothstep(0.18, 0.86, sourcePulse).clamp(0.52, 1);
+      const pulseGate = nodeSmoothstep(0.18, 0.86, sourcePulse).clamp(0.74, 1);
       const sourceBurst = this.uniforms.time
         .mul(1.38)
         .add(sourcePulse.mul(2.1))
@@ -1885,8 +2175,8 @@ class FluidGrid3D {
         .mul(0.5)
         .add(0.5);
       const sourceBurstGate = nodeSmoothstep(0.2, 0.9, sourceBurst)
-        .mul(emitter.noiseStrength.mul(0.18).add(0.82))
-        .clamp(0.34, 1.22);
+        .mul(emitter.noiseStrength.mul(0.08).add(0.92))
+        .clamp(0.72, 1.08);
       const hollowSource = nodeSmoothstep(
         emitter.radius.mul(0.12),
         emitter.radius.mul(0.72),
@@ -1929,13 +2219,13 @@ class FluidGrid3D {
         .mul(sourceRingMask.max(sourceMask.mul(0.35)))
         .mul(sourceNoise)
         .mul(this.uniforms.turbulence)
-        .mul(0.04);
+        .mul(0.18);
       const sourceCurlVelocity = sourceTangent
         .mul(sourceRingMask)
         .mul(sourceRingPhase)
         .mul(this.uniforms.curlStrength)
         .mul(this.uniforms.turbulence)
-        .mul(0.09);
+        .mul(0.08);
       const sourceCurlNoise = curlNoiseField3D(
         uvw.mul(this.uniforms.detailScale.mul(0.52)).add(
           vec3(
@@ -1948,7 +2238,7 @@ class FluidGrid3D {
         .mul(sourceMask.max(coreMask.mul(0.7)))
         .mul(this.uniforms.curlStrength)
         .mul(this.uniforms.turbulence)
-        .mul(0.32);
+        .mul(0.16);
       const sourceBaseVelocity = emitter.velocity.add(vec3(0, this.uniforms.riseSpeed.mul(0.48), 0));
       const sourceSpeed = dot(sourceBaseVelocity, sourceBaseVelocity).sqrt();
       const flowDir = sourceBaseVelocity.div(sourceSpeed.max(0.001));
@@ -1987,32 +2277,51 @@ class FluidGrid3D {
         0.64,
         1.22,
         sourceNoise.mul(0.48).add(lobeNoise.mul(0.7)),
-      ).clamp(0.12, 1);
+      ).clamp(0.42, 1);
       const sourcePatchGate = nodeSmoothstep(
-        0.46,
-        1.18,
+        0.58,
+        1.22,
         sourceNoise
-          .mul(0.38)
-          .add(lobeNoise.mul(0.36))
-          .add(sourceBurstGate.mul(0.2))
-          .add(sourceRingPhase.abs().mul(0.22))
-          .add(sourceRingMask.mul(0.18)),
-      ).clamp(0.28, 1);
+          .mul(0.32)
+          .add(lobeNoise.mul(0.34))
+          .add(sourceBurstGate.mul(0.16))
+          .add(sourceRingPhase.abs().mul(0.28))
+          .add(sourceRingMask.mul(0.28)),
+      ).clamp(0.38, 1);
+      const sheetPhaseA = sourceDelta.x
+        .mul(11.7)
+        .add(sourceDelta.z.mul(7.9))
+        .add(this.uniforms.time.mul(1.15));
+      const sheetPhaseB = sourceDelta.x
+        .mul(-8.4)
+        .add(sourceDelta.z.mul(12.6))
+        .sub(this.uniforms.time.mul(0.92));
+      const sourceSheetGate = nodeSmoothstep(
+        0.18,
+        0.82,
+        sheetPhaseA.sin()
+          .mul(0.5)
+          .add(0.5)
+          .mul(0.55)
+          .add(sheetPhaseB.cos().mul(0.5).add(0.5).mul(0.45))
+          .add(sourceRingPhase.abs().mul(0.14)),
+      ).clamp(0.46, 1);
       const sourceSurface = sourceMask
-        .mul(hollowSource.mul(0.42).add(coreMask.mul(0.12)).add(sourceRingMask.mul(0.42)).add(0.16))
+        .mul(hollowSource.mul(0.42).add(coreMask.mul(0.18)).add(sourceRingMask.mul(0.48)).add(0.14))
         .clamp(0, 1.24);
       const shellMask = sourceSurface
         .mul(sourceNoise)
         .mul(pulseGate)
         .mul(sourceBurstGate)
         .mul(sourcePatchGate)
+        .mul(sourceSheetGate)
         .mul(lobeNoise)
         .mul(lobeGate)
-        .mul(sourceRingMask.mul(0.46).add(hollowSource.mul(0.34)).add(coreMask.mul(0.08)).add(0.36))
+        .mul(sourceRingMask.mul(0.58).add(hollowSource.mul(0.38)).add(coreMask.mul(0.03)).add(0.24))
         .mul(shellBias.mul(0.36).add(0.72));
       const coreSource = coreMask
         .mul(sourceNoise)
-        .mul(0.032)
+        .mul(0.026)
         .mul(sourceBurstGate.mul(0.22).add(0.82));
       const mask = shellMask.max(coreSource).max(wakeMask).mul(openMask);
       const currentDensity = readDensity.element(instanceIndex);
@@ -2102,7 +2411,7 @@ class FluidGrid3D {
         .mul(this.uniforms.turbulence)
         .mul(this.uniforms.curlStrength)
         .mul(scalarActive)
-        .mul(0.36);
+        .mul(0.14);
       const heightTransport = nodeSmoothstep(0.08, 0.86, uvw.y).clamp(0, 1);
       const meanderPhase = uvw.y
         .mul(7.4)
@@ -2117,7 +2426,7 @@ class FluidGrid3D {
         .mul(this.uniforms.curlStrength)
         .mul(scalarActive)
         .mul(heightTransport)
-        .mul(0.09);
+        .mul(0.065);
       const rollDelta = uvw.sub(this.uniforms.vortexPosition);
       const rollRadial = vec3(rollDelta.x, 0, rollDelta.z);
       const rollDistance = dot(rollRadial, rollRadial).sqrt();
@@ -2141,7 +2450,7 @@ class FluidGrid3D {
         .mul(scalarActive)
         .mul(rollBand)
         .mul(rollHeightMask)
-        .mul(0.16);
+        .mul(0.07);
       const expansionAdvectVelocity = rollRadialDir
         .mul(nodeSmoothstep(0.035, 0.2, rollDistance).oneMinus().mul(0.28).add(rollBand.mul(0.62)))
         .mul(this.uniforms.turbulence)
@@ -2197,7 +2506,7 @@ class FluidGrid3D {
         correctedVelocity.assign(correctedVelocity.max(velocityBounds.min).min(velocityBounds.max));
       }
       const openMask = this.obstacleMask.element(instanceIndex).oneMinus().clamp(0, 1);
-      const topOutflowFade = nodeSmoothstep(0.84, 0.998, uvw.y).oneMinus().clamp(0, 1);
+      const topOutflowFade = nodeSmoothstep(0.84, 0.995, uvw.y).oneMinus().clamp(0, 1);
       const sideEdge = uvw.x
         .min(uvw.z)
         .min(uvw.x.oneMinus())
@@ -2206,8 +2515,8 @@ class FluidGrid3D {
       const outflowFade = topOutflowFade.mul(sideOutflowFade);
       const densityDecay = this.uniforms.densityDissipation
         .add(this.uniforms.residenceRate.mul(0.15))
-        .add(correctedDensity.z.mul(this.uniforms.residenceRate).mul(0.55))
-        .add(nodeSmoothstep(0.52, 0.98, uvw.y).mul(this.uniforms.residenceRate).mul(0.72))
+        .add(correctedDensity.z.mul(this.uniforms.residenceRate).mul(0.78))
+        .add(nodeSmoothstep(0.54, 0.94, uvw.y).mul(this.uniforms.residenceRate).mul(1.75))
         .mul(this.uniforms.dt);
       const breakupCoord = uvw
         .mul(this.uniforms.detailScale.mul(0.58))
@@ -2237,27 +2546,80 @@ class FluidGrid3D {
           .add(correctedDensity.w.mul(0.28))
           .add(scalarActive.mul(0.06)),
       ).clamp(0, 1);
+      const velocityMagnitude = dot(correctedVelocity.xyz, correctedVelocity.xyz).sqrt();
+      const stagnantSmoke = nodeSmoothstep(0.24, 0.78, correctedDensity.z)
+        .mul(nodeSmoothstep(0.035, 0.24, velocityMagnitude).oneMinus())
+        .mul(nodeSmoothstep(0.14, 0.82, uvw.y))
+        .clamp(0, 1);
+      const smoothBody = nodeSmoothstep(0.08, 0.48, correctedDensity.x)
+        .mul(sheetBreakup.oneMinus())
+        .mul(breakupEdge.oneMinus())
+        .clamp(0, 1);
+      const stagnantBodyDecay = stagnantSmoke
+        .mul(smoothBody)
+        .mul(this.uniforms.residenceRate)
+        .mul(5.2)
+        .mul(this.uniforms.dt)
+        .clamp(0, 0.85);
+      const plumePhase = uvw.y
+        .mul(6.2)
+        .add(this.uniforms.time.mul(0.46))
+        .add(valueNoise3D(uvw.mul(3.1).add(vec3(11.4, this.uniforms.time.mul(0.12), 6.8))).sub(0.5).mul(1.1));
+      const plumeCenter = vec2(
+        float(0.5).add(plumePhase.sin().mul(0.075).mul(nodeSmoothstep(0.12, 0.82, uvw.y))),
+        float(0.5).add(plumePhase.add(1.7).cos().mul(0.06).mul(nodeSmoothstep(0.12, 0.82, uvw.y))),
+      );
+      const plumeRadial = dot(uvw.xz.sub(plumeCenter), uvw.xz.sub(plumeCenter)).sqrt();
+      const plumeRadius = float(0.075)
+        .add(nodeSmoothstep(0.04, 0.58, uvw.y).mul(0.18))
+        .mul(mix(float(1), float(0.58), nodeSmoothstep(0.72, 0.98, uvw.y)))
+        .clamp(0.06, 0.28);
+      const plumeEdgeNoise = valueNoise3D(
+        uvw.mul(this.uniforms.detailScale.mul(0.18)).add(
+          vec3(
+            this.uniforms.time.mul(0.18),
+            this.uniforms.time.mul(-0.24),
+            this.uniforms.time.mul(0.14),
+          ),
+        ),
+      )
+        .sub(0.5)
+        .mul(0.045)
+        .mul(nodeSmoothstep(0.1, 0.9, uvw.y));
+      const plumeEnvelope = nodeSmoothstep(
+        plumeRadius.mul(0.72),
+        plumeRadius.mul(1.38),
+        plumeRadial.add(plumeEdgeNoise),
+      ).oneMinus().clamp(0, 1);
+      const plumeConfinement = mix(
+        float(1),
+        plumeEnvelope.mul(0.92).add(0.08),
+        this.uniforms.plumeTaper.mul(0.72).clamp(0, 0.92),
+      ).clamp(0.05, 1);
       const densityBreakup = mix(
         float(1),
         mix(float(0.055), float(1.16), sheetBreakup),
         breakupWeight.mul(0.92),
       ).clamp(0.055, 1.18);
       const densityValue = correctedDensity.x
-        .mul(float(1).sub(densityDecay).clamp(0, 1))
+        .mul(float(1).sub(densityDecay).sub(stagnantBodyDecay).clamp(0, 1))
         .mul(densityBreakup)
+        .mul(plumeConfinement)
         .mul(outflowFade);
       const advectedDetail = correctedDensity.w
-        .mul(float(1).sub(densityDecay.mul(0.52)).clamp(0, 1))
+        .mul(float(1).sub(densityDecay.mul(0.52)).sub(stagnantBodyDecay.mul(0.35)).clamp(0, 1))
         .mul(mix(float(0.76), float(1.18), sheetBreakup))
+        .mul(plumeConfinement.mul(0.72).add(0.28))
         .mul(outflowFade)
         .clamp(0, 1);
       const temperatureCooling = this.uniforms.densityDissipation
         .mul(1.8)
         .add(0.1)
-        .add(nodeSmoothstep(0.6, 0.98, uvw.y).mul(this.uniforms.residenceRate).mul(0.42))
+        .add(nodeSmoothstep(0.62, 0.96, uvw.y).mul(this.uniforms.residenceRate).mul(0.75))
         .mul(this.uniforms.dt);
       const temperature = correctedDensity.y
         .mul(float(1).sub(temperatureCooling).clamp(0, 1))
+        .mul(plumeConfinement.mul(0.82).add(0.18))
         .mul(outflowFade);
       const age = correctedDensity.z
         .add(this.uniforms.dt.mul(this.uniforms.residenceRate))
@@ -2494,7 +2856,7 @@ class FluidGrid3D {
         .mul(activeMask)
         .mul(this.uniforms.plumeTaper)
         .mul(this.uniforms.riseSpeed)
-        .mul(0.28);
+        .mul(0.12);
       const shearLayerMask = nodeSmoothstep(0.03, 0.16, sourceRadialDistance)
         .mul(nodeSmoothstep(0.2, 0.48, sourceRadialDistance).oneMinus())
         .mul(nodeSmoothstep(0.08, 0.2, uvw.y))
@@ -2519,7 +2881,7 @@ class FluidGrid3D {
         .mul(shearLayerMask)
         .mul(this.uniforms.turbulence)
         .mul(this.uniforms.curlStrength)
-        .mul(0.18);
+        .mul(0.46);
       const nextVelocity = currentVelocity.xyz.add(
         vec3(windForce.x, lift.add(windForce.y), windForce.z)
           .add(vortexForce)
@@ -2616,8 +2978,8 @@ class FluidGrid3D {
       const nextVelocity = center
         .add(
           confinement
-            .mul(2.45)
-            .add(turbulenceForce.mul(this.uniforms.curlStrength).mul(0.52))
+            .mul(2.35)
+            .add(turbulenceForce.mul(this.uniforms.curlStrength).mul(0.38))
             .mul(this.uniforms.dt),
         )
         .mul(openMask);
@@ -2753,12 +3115,18 @@ class FluidGrid3D {
         .add(valueNoise3D(packDetailCoord.mul(2.03).add(vec3(19.7, 4.2, 31.5))).mul(0.34))
         .add(valueNoise3D(packDetailCoord.mul(3.61).add(vec3(5.8, 43.1, 12.4))).mul(0.18));
       const packRidge = packNoise.sub(0.5).mul(2).abs().oneMinus().clamp(0, 1);
+      const packErosion = mix(
+        float(0.62),
+        float(1.18),
+        packRidge.mul(0.58).add(densitySample.w.mul(0.42)).clamp(0, 1),
+      );
       const renderDensity = densitySample.x
-        .mul(0.72)
-        .add(neighborAverage.x.mul(0.16))
-        .add(localContrast.mul(0.08))
-        .add(densityEdge.mul(0.018))
-        .add(neighborMax.x.sub(densitySample.x).max(0).mul(0.012))
+        .mul(0.66)
+        .add(neighborAverage.x.mul(0.08))
+        .add(localContrast.mul(0.18))
+        .add(densityEdge.mul(0.035))
+        .add(neighborMax.x.sub(densitySample.x).max(0).mul(0.016))
+        .mul(packErosion)
         .clamp(0, 2.5);
       const renderTemperature = densitySample.y.mul(0.78).add(neighborAverage.y.mul(0.22)).clamp(0, 2);
       const velocitySample = velocity.element(instanceIndex).xyz;
@@ -2791,7 +3159,7 @@ class FluidGrid3D {
           renderDensity,
           renderTemperature,
           speed.mul(activeMask).clamp(0, 8).div(8),
-          renderDetail,
+          densitySample.z,
         ),
       ).toWriteOnly();
     })()
@@ -3034,7 +3402,7 @@ function resolveSourceRadius(params: WispySmokeVFXParams, bounds: VolumeBounds):
 }
 
 function resolvePressureIterations(config: WispySmokeRuntimeConfig): number {
-  return Math.max(2, Math.round(config.solver.pressureIterations));
+  return clamp(Math.round(config.solver.pressureIterations), 4, MAX_PRESSURE_ITERATIONS);
 }
 
 export class WispySmokeVFX implements VFXEffect<WispySmokeVFXParams> {

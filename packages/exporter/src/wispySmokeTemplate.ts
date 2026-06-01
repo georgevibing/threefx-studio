@@ -320,7 +320,7 @@ interface SmokeParticle {
 const RUNTIME_SOLVER = "eulerian-fluid-grid";
 const DEFAULT_PARAMS: ${className}Params = ${paramsLiteral(ir.parameterValues)} as ${className}Params;
 const DEFAULT_RUNTIME_CONFIG: WispySmokeRuntimeConfig = ${runtimeConfigLiteral(ir)} as WispySmokeRuntimeConfig;
-const SOURCE_DENSITY_RATE_SCALE = 0.028;
+const SOURCE_DENSITY_RATE_SCALE = 0.032;
 const SOURCE_VELOCITY_INJECTION_SCALE = 2.6;
 
 const QUALITY: Record<WispySmokeQuality, { maxParticles: number; maxRaySteps: number; volumeGrid: Vec3 }> = {
@@ -582,9 +582,9 @@ function normalizeRuntimeConfig(params: ${className}Params, config: Partial<Wisp
 
 function resolveFluidBounds(params: ${className}Params): VolumeBounds {
   const windSpread = Math.hypot(params.wind[0], params.wind[2]) * params.lifetime * 0.32;
-  const sourceSpread = params.radius * 6.5 + params.turbulence * 0.18 + windSpread;
+  const sourceSpread = params.radius * 7.2 + params.turbulence * 0.36 + params.size * 0.38 + windSpread;
   const authoredSize = params.size * 1.08;
-  const width = Math.max(1.55, sourceSpread, authoredSize, params.height * 0.32);
+  const width = Math.max(4.2, sourceSpread, authoredSize, params.height * 0.56);
   return { depth: width, height: Math.max(0.75, params.height), width };
 }
 
@@ -593,11 +593,11 @@ function resolveEffectiveGridResolution(params: ${className}Params): WispySmokeG
 }
 
 function resolveRenderSteps(params: ${className}Params): number {
-  return Math.max(16, Math.round(QUALITY[resolveEffectiveGridResolution(params)].maxRaySteps * params.renderStepScale));
+  return Math.max(16, Math.round(QUALITY[resolveEffectiveGridResolution(params)].maxRaySteps * clamp(params.renderStepScale, 0.1, 1.35)));
 }
 
 function resolvePressureIterations(params: ${className}Params): number {
-  return Math.max(2, Math.round(params.pressureIterations));
+  return clamp(Math.round(params.pressureIterations), 4, 40);
 }
 
 function resolveSourceRadius(params: ${className}Params, bounds: VolumeBounds): number {
@@ -622,7 +622,7 @@ function createFluidUniforms(params: ${className}Params): FluidUniforms {
     radius: uniform(resolveSourceRadius(params, bounds)),
     riseSpeed: uniform(params.riseSpeed),
     scattering: uniform(params.scattering),
-    shadowSamples: uniform(params.shadowQuality),
+    shadowSamples: uniform(clamp(params.shadowQuality, 0, 16)),
     smokeColor: uniform(new THREE.Color(params.color)),
     sourceRate: uniform(params.spawnRate * params.density * SOURCE_DENSITY_RATE_SCALE),
     sourceTemperature: uniform(params.sourceTemperature),
@@ -760,7 +760,7 @@ class FluidGrid3D {
     this.uniforms.radius.value = resolveSourceRadius(params, this.bounds);
     this.uniforms.riseSpeed.value = params.riseSpeed;
     this.uniforms.scattering.value = params.scattering;
-    this.uniforms.shadowSamples.value = params.shadowQuality;
+    this.uniforms.shadowSamples.value = clamp(params.shadowQuality, 0, 16);
     this.uniforms.smokeColor.value.set(params.color);
     this.uniforms.sourceRate.value = params.spawnRate * params.density * SOURCE_DENSITY_RATE_SCALE;
     this.uniforms.sourceTemperature.value = params.sourceTemperature;
@@ -1300,46 +1300,46 @@ export function createUsageSnippet(className: string): string {
 const smoke = new ${className}({
   renderer,
   backendMode: "auto",
-  quality: "high",
-  gridResolution: "high",
+  quality: "medium",
+  gridResolution: "medium",
   worldPosition: [0, 0, 0],
-  spawnRate: 760,
-  lifetime: 6,
-  radius: 0.42,
-  height: 5.8,
+  spawnRate: 1150,
+  lifetime: 5.4,
+  radius: 0.44,
+  height: 8.4,
   density: 0.24,
-  baseDensity: 2.35,
-  opacity: 0.92,
-  riseSpeed: 1.65,
-  buoyantLift: 1.85,
-  turbulence: 2.6,
-  curlStrength: 5.55,
-  vorticityConfinement: 7.1,
+  baseDensity: 3.2,
+  opacity: 0.9,
+  riseSpeed: 0.92,
+  buoyantLift: 1.55,
+  turbulence: 3.25,
+  curlStrength: 5.4,
+  vorticityConfinement: 6.2,
   wind: [0, 0, 0],
-  sourceVelocity: [0.02, 0.75, 0.02],
-  vortexStrength: 0.16,
-  pressureIterations: 20,
+  sourceVelocity: [0.02, 0.38, 0.02],
+  vortexStrength: 0.14,
+  pressureIterations: 10,
   diffusion: 0,
   diffusionIterations: 0,
-  advectionMode: "maccormack",
+  advectionMode: "trilinear",
   sourceTemperature: 1.28,
-  plumeTaper: 0.48,
+  plumeTaper: 0.56,
   emissionColor: "#eef8fc",
   emissionIntensity: 0.08,
-  absorption: 0.9,
-  scattering: 3.65,
-  detailScale: 26,
-  detailStrength: 5.65,
+  absorption: 1.35,
+  scattering: 2.9,
+  detailScale: 28,
+  detailStrength: 6.4,
   detailSpeed: 1.18,
   detailOctaves: 4,
   sourceGlowEnabled: false,
   sourceGlowColor: "#c7d2d8",
   sourceGlowIntensity: 0.22,
-  renderStepScale: 1.7,
-  shadowQuality: 12,
+  renderStepScale: 1,
+  shadowQuality: 6,
   shadowStrength: 1.35,
   debugView: "final",
-  color: "#aebfc8"
+  color: "#8fa6b0"
 });
 
 scene.add(smoke.object3D);

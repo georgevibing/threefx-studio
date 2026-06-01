@@ -31,7 +31,7 @@ const PARAMETER_NODE_DEFAULTS = {
   ],
   float: 0,
   int: 0,
-  quality: "high",
+  quality: "medium",
   string: "",
   vec2: [0, 0],
   vec3: [0, 0, 0],

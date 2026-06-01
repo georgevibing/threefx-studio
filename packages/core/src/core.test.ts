@@ -94,12 +94,12 @@ describe("@threefx/core", () => {
       ]),
     );
     expect(registry.instantiate("parameter.quality", "quality", [0, 0]).parameters?.value).toBe(
-      "high",
+      "medium",
     );
 
     const spawnRatePort = registry.get("emitter.sphere")?.ports.find((port) => port.id === "spawnRate");
     expect(spawnRatePort).toMatchObject({
-      defaultValue: 760,
+      defaultValue: 1150,
       direction: "input",
       effectParameterId: "spawnRate",
       group: "Emission",
@@ -199,7 +199,7 @@ describe("@threefx/core", () => {
     expect(first.ir?.nodes.map((node) => node.id)).toContain("volume_render");
     expect(first.ir?.runtimeConfig.emitters).toHaveLength(1);
     expect(first.ir?.runtimeConfig.forces.length).toBeGreaterThanOrEqual(2);
-    expect(first.ir?.runtimeConfig.solver.advectionMode).toBe("maccormack");
+    expect(first.ir?.runtimeConfig.solver.advectionMode).toBe("trilinear");
   });
 
   it("compiles stable runtime config arrays for multiple emitters, forces, and obstacles", () => {
@@ -294,7 +294,7 @@ describe("@threefx/core", () => {
     expect(
       WISPY_SMOKE_PARAMETER_METADATA.find((parameter) => parameter.id === "renderStepScale")
         ?.defaultValue,
-    ).toBe(1.7);
+    ).toBe(1);
   });
 
   it("keeps runtime config fallbacks aligned with metadata defaults", () => {

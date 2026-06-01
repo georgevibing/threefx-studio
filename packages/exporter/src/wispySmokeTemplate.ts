@@ -320,7 +320,7 @@ interface SmokeParticle {
 const RUNTIME_SOLVER = "eulerian-fluid-grid";
 const DEFAULT_PARAMS: ${className}Params = ${paramsLiteral(ir.parameterValues)} as ${className}Params;
 const DEFAULT_RUNTIME_CONFIG: WispySmokeRuntimeConfig = ${runtimeConfigLiteral(ir)} as WispySmokeRuntimeConfig;
-const SOURCE_DENSITY_RATE_SCALE = 0.07;
+const SOURCE_DENSITY_RATE_SCALE = 0.022;
 const SOURCE_VELOCITY_INJECTION_SCALE = 2.6;
 
 const QUALITY: Record<WispySmokeQuality, { maxParticles: number; maxRaySteps: number; volumeGrid: Vec3 }> = {
@@ -1305,17 +1305,19 @@ const smoke = new ${className}({
   worldPosition: [0, 0, 0],
   spawnRate: 880,
   lifetime: 5.6,
-  radius: 0.48,
+  radius: 0.42,
   height: 5.4,
-  density: 0.28,
-  baseDensity: 2.75,
+  density: 0.34,
+  baseDensity: 2.6,
   opacity: 0.96,
   riseSpeed: 2.9,
   buoyantLift: 3.4,
-  turbulence: 3,
-  curlStrength: 4.2,
-  vorticityConfinement: 4.3,
-  wind: [0.22, 0.03, 0.1],
+  turbulence: 2.45,
+  curlStrength: 3.65,
+  vorticityConfinement: 4,
+  wind: [0.035, 0.02, 0.015],
+  sourceVelocity: [0.03, 1.35, 0.02],
+  vortexStrength: 0.32,
   pressureIterations: 20,
   diffusion: 0,
   diffusionIterations: 0,
@@ -1324,11 +1326,11 @@ const smoke = new ${className}({
   plumeTaper: 0.18,
   emissionColor: "#eef8fc",
   emissionIntensity: 0.18,
-  absorption: 1.55,
-  scattering: 3.8,
-  detailScale: 20,
-  detailStrength: 4.55,
-  detailSpeed: 1.65,
+  absorption: 1.45,
+  scattering: 4.8,
+  detailScale: 14.5,
+  detailStrength: 3.9,
+  detailSpeed: 1.35,
   detailOctaves: 4,
   sourceGlowEnabled: false,
   sourceGlowColor: "#c7d2d8",
@@ -1337,7 +1339,7 @@ const smoke = new ${className}({
   shadowQuality: 12,
   shadowStrength: 1.1,
   debugView: "final",
-  color: "#c3d4dc"
+  color: "#d0dee4"
 });
 
 scene.add(smoke.object3D);

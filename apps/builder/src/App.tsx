@@ -32,6 +32,8 @@ import {
   Link2,
   Maximize2,
   Minimize2,
+  PanelLeftClose,
+  PanelLeftOpen,
   Plus,
   Redo2,
   RotateCcw,
@@ -77,7 +79,10 @@ import { WispySmokeVFX, type WispySmokeVFXParams, type WispySmokeVFXStats } from
 import { createExportZip, exportEffectToTypeScript } from "@threefx/exporter";
 import { getWebGPUFeatureStatus } from "@threefx/runtime";
 import { getPortTypeTone } from "@threefx/ui";
-import { createLocalStorageEditorPersistence } from "./editorPersistence";
+import {
+  createLocalStorageEditorPersistence,
+  createLocalStorageEditorPreference,
+} from "./editorPersistence";
 
 type FlowNodeData = {
   readonly definition: NodeDefinition;
@@ -143,6 +148,11 @@ type NodeInputBindingView = {
   readonly sourcePort: PortDefinition | null;
 };
 
+type NodeDefinitionGroup = {
+  readonly category: string;
+  readonly definitions: readonly NodeDefinition[];
+};
+
 type SelectionDragState = {
   readonly active: boolean;
   readonly additive: boolean;
@@ -152,7 +162,25 @@ type SelectionDragState = {
 };
 
 const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph:v1";
+const NODE_PALETTE_VISIBLE_STORAGE_KEY = "threefx-studio:node-palette-visible:v1";
 const editorPersistence = createLocalStorageEditorPersistence(LOCAL_STORAGE_KEY);
+const nodePaletteVisibilityPersistence = createLocalStorageEditorPreference<boolean>(
+  NODE_PALETTE_VISIBLE_STORAGE_KEY,
+  {
+    parse(source) {
+      if (source === "true") {
+        return true;
+      }
+      if (source === "false") {
+        return false;
+      }
+      throw new Error(`Invalid node palette visibility preference '${source}'.`);
+    },
+    serialize(value) {
+      return value ? "true" : "false";
+    },
+  },
+);
 const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
   activeDebugView: "final",
   advectionMode: "trilinear",
@@ -176,6 +204,7 @@ const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
 const HISTORY_LIMIT = 100;
 const QUICK_ADD_WIDTH = 280;
 const QUICK_ADD_ANCHOR_Y = 42;
+const QUICK_ADD_VIEWPORT_MARGIN = 12;
 const SELECTION_DRAG_THRESHOLD = 4;
 const AUTO_LAYOUT_NODE_WIDTH = 260;
 const AUTO_LAYOUT_RANK_HORIZONTAL_GAP = 160;
@@ -747,6 +776,30 @@ function portToneStyle(type: PortType): React.CSSProperties {
   } as React.CSSProperties;
 }
 
+function nodeCategoryToneStyle(category: NodeDefinitionGroup): React.CSSProperties {
+  const tone = getPortTypeTone(category.definitions[0]?.kind ?? "any");
+  return {
+    "--category-color": tone.accent,
+    "--category-background": tone.background,
+    "--category-border-color": tone.border,
+  } as React.CSSProperties;
+}
+
+function groupNodeDefinitions(
+  definitions: readonly NodeDefinition[],
+): readonly NodeDefinitionGroup[] {
+  const groups = new Map<string, NodeDefinition[]>();
+  for (const definition of definitions) {
+    const existing = groups.get(definition.category) ?? [];
+    existing.push(definition);
+    groups.set(definition.category, existing);
+  }
+  return [...groups.entries()].map(([category, entries]) => ({
+    category,
+    definitions: entries,
+  }));
+}
+
 function isCanvasReleaseTarget(event: MouseEvent | TouchEvent): boolean {
   const target = event.target;
   if (!(target instanceof Element)) {
@@ -915,6 +968,24 @@ function getPendingQuickAddPath({
     : bezierPath(popover, port);
 }
 
+function clampQuickAddScreenPosition(screen: { readonly x: number; readonly y: number }): {
+  readonly x: number;
+  readonly y: number;
+} {
+  const width = Math.min(
+    QUICK_ADD_WIDTH,
+    Math.max(0, window.innerWidth - QUICK_ADD_VIEWPORT_MARGIN * 2),
+  );
+  const maxX = Math.max(
+    QUICK_ADD_VIEWPORT_MARGIN,
+    window.innerWidth - width - QUICK_ADD_VIEWPORT_MARGIN,
+  );
+  return {
+    x: Math.min(Math.max(screen.x, QUICK_ADD_VIEWPORT_MARGIN), maxX),
+    y: Math.max(screen.y, QUICK_ADD_VIEWPORT_MARGIN),
+  };
+}
+
 function nodeSelectionChanges(changes: readonly NodeChange<FlowNode>[]) {
   return changes.filter(
     (
@@ -1030,6 +1101,7 @@ function App() {
   const [paletteQuery, setPaletteQuery] = useState("");
   const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null);
   const [isMiddlePanning, setIsMiddlePanning] = useState(false);
+  const [isNodePaletteVisible, setIsNodePaletteVisible] = useState(false);
   const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
   const [historyRevision, setHistoryRevision] = useState(0);
   const [canvasBounds, setCanvasBounds] = useState<DOMRect | null>(null);
@@ -1046,6 +1118,7 @@ function App() {
   const pendingMoveSnapshotRef = useRef<EditorSnapshot | null>(null);
   const selectionBaseNodeIdsRef = useRef<ReadonlySet<string>>(new Set());
   const selectionDragRef = useRef<SelectionDragState | null>(null);
+  const nodePalettePreferenceTouchedRef = useRef(false);
   const suppressNextNodeSelectionChangeRef = useRef(false);
   const suppressNextPaneClickRef = useRef(false);
   const undoStackRef = useRef<EditorSnapshot[]>([]);
@@ -1088,6 +1161,32 @@ function App() {
     setQuickAdd(null);
     setNodeMenu(null);
   }, []);
+
+  useEffect(() => {
+    let disposed = false;
+    void nodePaletteVisibilityPersistence.load().then((result) => {
+      if (disposed || nodePalettePreferenceTouchedRef.current) {
+        return;
+      }
+      if (result.status === "loaded") {
+        setIsNodePaletteVisible(result.value);
+      } else if (result.status === "error") {
+        console.warn(result.message);
+      }
+    });
+    return () => {
+      disposed = true;
+    };
+  }, []);
+
+  const toggleNodePalette = useCallback(() => {
+    const next = !isNodePaletteVisible;
+    nodePalettePreferenceTouchedRef.current = true;
+    setIsNodePaletteVisible(next);
+    void nodePaletteVisibilityPersistence.save(next).catch((error) => {
+      console.error(error);
+    });
+  }, [isNodePaletteVisible]);
 
   const commitGraphChange = useCallback(
     (
@@ -1514,8 +1613,9 @@ function App() {
           suppressNextPaneClickRef.current = false;
         }, 0);
       }
+      const clampedScreen = clampQuickAddScreenPosition(screen);
       setQuickAdd({
-        screen,
+        screen: clampedScreen,
         flow: screenToFlowPosition(screen),
         mode,
       });
@@ -1978,9 +2078,11 @@ function App() {
         onAutoLayout={autoLayoutGraph}
         onRedo={redoEdit}
         onShowShortcuts={() => setIsShortcutDialogOpen(true)}
+        onToggleNodePalette={toggleNodePalette}
         onUndo={undoEdit}
         canRedo={canRedo}
         canUndo={canUndo}
+        isNodePaletteVisible={isNodePaletteVisible}
       />
       <input
         ref={fileInputRef}
@@ -1995,14 +2097,16 @@ function App() {
           event.currentTarget.value = "";
         }}
       />
-      <section className="workspace">
-        <NodePalette
-          query={paletteQuery}
-          onQueryChange={setPaletteQuery}
-          quickAdd={quickAdd}
-          graph={graph}
-          onAddNode={addNode}
-        />
+      <section className={`workspace ${isNodePaletteVisible ? "workspace-palette-open" : ""}`}>
+        {isNodePaletteVisible ? (
+          <NodePalette
+            query={paletteQuery}
+            onQueryChange={setPaletteQuery}
+            quickAdd={quickAdd}
+            graph={graph}
+            onAddNode={addNode}
+          />
+        ) : null}
         <div
           ref={canvasPanelRef}
           className={`canvas-panel ${isMiddlePanning ? "canvas-panel-panning" : ""}`}
@@ -2118,9 +2222,11 @@ function TopBar({
   onAutoLayout,
   onRedo,
   onShowShortcuts,
+  onToggleNodePalette,
   onUndo,
   canRedo,
   canUndo,
+  isNodePaletteVisible,
 }: {
   readonly status: string;
   readonly onSave: () => void;
@@ -2131,9 +2237,11 @@ function TopBar({
   readonly onAutoLayout: () => void;
   readonly onRedo: () => void;
   readonly onShowShortcuts: () => void;
+  readonly onToggleNodePalette: () => void;
   readonly onUndo: () => void;
   readonly canRedo: boolean;
   readonly canUndo: boolean;
+  readonly isNodePaletteVisible: boolean;
 }) {
   return (
     <header className="topbar">
@@ -2145,6 +2253,13 @@ function TopBar({
         </div>
       </div>
       <div className="topbar-actions">
+        <IconButton
+          title={isNodePaletteVisible ? "Hide node palette" : "Show node palette"}
+          onClick={onToggleNodePalette}
+          icon={
+            isNodePaletteVisible ? <PanelLeftClose size={16} /> : <PanelLeftOpen size={16} />
+          }
+        />
         <IconButton title="Save" onClick={onSave} icon={<Save size={16} />} />
         <IconButton title="Load" onClick={onLoad} icon={<FolderOpen size={16} />} />
         <IconButton title="Import" onClick={onImportClick} icon={<Upload size={16} />} />
@@ -2929,48 +3044,31 @@ function NodePalette({
   ) => void;
 }) {
   const mode = quickAdd?.mode ?? { kind: "free" };
-  const entries = useFilteredDefinitions(query, graph, mode);
   return (
     <aside className="node-palette">
       <div className="panel-heading">
         <h2>Nodes</h2>
         <Plus size={16} />
       </div>
-      <input
-        value={query}
-        onChange={(event) => onQueryChange(event.target.value)}
-        placeholder="Search"
-        aria-label="Search nodes"
+      <NodeDefinitionPicker
+        graph={graph}
+        mode={mode}
+        query={query}
+        searchLabel="Search nodes"
+        searchPlaceholder="Search"
+        onAddNode={(type) => onAddNode(type, quickAdd?.flow ?? { x: -80, y: 40 }, quickAdd?.mode)}
+        onQueryChange={onQueryChange}
+        draggable
       />
-      <div className="palette-list">
-        {entries.map((entry) => (
-          <button
-            key={entry.type}
-            type="button"
-            className="palette-item"
-            draggable
-            onDragStart={(event) => {
-              event.dataTransfer.setData("application/threefx-node", entry.type);
-              event.dataTransfer.effectAllowed = "copy";
-            }}
-            onClick={() =>
-              onAddNode(entry.type, quickAdd?.flow ?? { x: -80, y: 40 }, quickAdd?.mode)
-            }
-          >
-            <span>{entry.label}</span>
-            <small>{getQuickAddEntrySubtitle(entry, graph, mode)}</small>
-          </button>
-        ))}
-      </div>
     </aside>
   );
 }
 
-function useFilteredDefinitions(
+function useFilteredDefinitionGroups(
   query: string,
   graph: GraphDocument,
   mode: QuickAddMode,
-): readonly NodeDefinition[] {
+): readonly NodeDefinitionGroup[] {
   return useMemo(() => {
     const normalized = query.trim().toLowerCase();
     const sourceNode =
@@ -2981,7 +3079,7 @@ function useFilteredDefinitions(
       mode.kind === "fromInput" ? graph.nodes.find((node) => node.id === mode.nodeId) : null;
     const targetPort =
       targetNode && mode.kind === "fromInput" ? findNodePort(targetNode, mode.portId) : null;
-    return defaultNodeRegistry
+    const definitions = defaultNodeRegistry
       .list()
       .filter((definition) => {
         if (sourcePort && !nodeHasCompatibleInput(definition, sourcePort)) {
@@ -2998,7 +3096,155 @@ function useFilteredDefinitions(
           .includes(normalized);
       })
       .slice(0, 48);
+    return groupNodeDefinitions(definitions);
   }, [graph.nodes, mode, query]);
+}
+
+function SearchInput({
+  autoFocus = false,
+  label,
+  placeholder,
+  value,
+  onChange,
+}: {
+  readonly autoFocus?: boolean;
+  readonly label: string;
+  readonly placeholder: string;
+  readonly value: string;
+  readonly onChange: (value: string) => void;
+}) {
+  return (
+    <div className="node-search">
+      <input
+        autoFocus={autoFocus}
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder}
+        aria-label={label}
+      />
+      {value ? (
+        <button
+          type="button"
+          className="node-search-clear"
+          title="Clear search"
+          aria-label="Clear search"
+          onClick={() => onChange("")}
+        >
+          <X size={13} />
+        </button>
+      ) : null}
+    </div>
+  );
+}
+
+function NodeDefinitionPicker({
+  autoFocus = false,
+  draggable = false,
+  graph,
+  mode,
+  query,
+  searchLabel,
+  searchPlaceholder,
+  onAddNode,
+  onQueryChange,
+}: {
+  readonly autoFocus?: boolean;
+  readonly draggable?: boolean;
+  readonly graph: GraphDocument;
+  readonly mode: QuickAddMode;
+  readonly query: string;
+  readonly searchLabel: string;
+  readonly searchPlaceholder: string;
+  readonly onAddNode: (type: string) => void;
+  readonly onQueryChange: (value: string) => void;
+}) {
+  const groups = useFilteredDefinitionGroups(query, graph, mode);
+  const isSearching = query.trim().length > 0;
+  const [openCategories, setOpenCategories] = useState<ReadonlySet<string>>(
+    () => new Set(defaultNodeRegistry.list().map((definition) => definition.category)),
+  );
+  const toggleCategory = useCallback((category: string) => {
+    setOpenCategories((current) => {
+      const next = new Set(current);
+      if (next.has(category)) {
+        next.delete(category);
+      } else {
+        next.add(category);
+      }
+      return next;
+    });
+  }, []);
+
+  return (
+    <>
+      <SearchInput
+        autoFocus={autoFocus}
+        label={searchLabel}
+        placeholder={searchPlaceholder}
+        value={query}
+        onChange={onQueryChange}
+      />
+      <div className="node-picker-list">
+        {groups.length > 0 ? (
+          groups.map((group) => {
+            const expanded = isSearching || openCategories.has(group.category);
+            return (
+              <section
+                key={group.category}
+                className="node-picker-category"
+                style={nodeCategoryToneStyle(group)}
+              >
+                <button
+                  type="button"
+                  className="node-picker-category-trigger"
+                  aria-expanded={expanded}
+                  aria-disabled={isSearching ? "true" : undefined}
+                  onClick={() => {
+                    if (!isSearching) {
+                      toggleCategory(group.category);
+                    }
+                  }}
+                >
+                  <span className="node-picker-category-accent" aria-hidden="true" />
+                  {expanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
+                  <span>{group.category}</span>
+                  <small>{group.definitions.length}</small>
+                </button>
+                {expanded ? (
+                  <div className="node-picker-category-body">
+                    {group.definitions.map((entry) => (
+                      <button
+                        key={entry.type}
+                        type="button"
+                        className="node-picker-item"
+                        draggable={draggable}
+                        onDragStart={(event) => {
+                          if (!draggable) {
+                            return;
+                          }
+                          event.dataTransfer.setData("application/threefx-node", entry.type);
+                          event.dataTransfer.effectAllowed = "copy";
+                        }}
+                        onClick={() => onAddNode(entry.type)}
+                      >
+                        <span className="node-picker-item-label">
+                          <span className="node-picker-item-dot" aria-hidden="true" />
+                          <span>{entry.label}</span>
+                        </span>
+                        <small>{getQuickAddEntrySubtitle(entry, graph, mode)}</small>
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+              </section>
+            );
+          })
+        ) : (
+          <div className="node-picker-empty">No nodes found</div>
+        )}
+      </div>
+    </>
+  );
 }
 
 function QuickAddPopover({
@@ -3020,7 +3266,6 @@ function QuickAddPopover({
   ) => void;
   readonly onClose: () => void;
 }) {
-  const entries = useFilteredDefinitions(query, graph, state.mode);
   useEffect(() => {
     const close = (event: KeyboardEvent) => {
       if (event.key === "Escape") {
@@ -3032,25 +3277,16 @@ function QuickAddPopover({
   }, [onClose]);
   return (
     <div className="quick-add" style={{ left: state.screen.x, top: state.screen.y }}>
-      <input
+      <NodeDefinitionPicker
         autoFocus
-        value={query}
-        onChange={(event) => onQueryChange(event.target.value)}
-        aria-label="Add node"
-        placeholder="Add node"
+        graph={graph}
+        mode={state.mode}
+        query={query}
+        searchLabel="Add node"
+        searchPlaceholder="Add node"
+        onAddNode={(type) => onAddNode(type, state.flow, state.mode)}
+        onQueryChange={onQueryChange}
       />
-      <div className="quick-add-list">
-        {entries.map((entry) => (
-          <button
-            key={entry.type}
-            type="button"
-            onClick={() => onAddNode(entry.type, state.flow, state.mode)}
-          >
-            <span>{entry.label}</span>
-            <small>{getQuickAddEntrySubtitle(entry, graph, state.mode)}</small>
-          </button>
-        ))}
-      </div>
     </div>
   );
 }

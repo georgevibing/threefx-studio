@@ -25,6 +25,11 @@ export const portTypeTones: Record<string, Tone> = {
     background: "rgba(251, 191, 36, 0.13)",
     border: "rgba(251, 191, 36, 0.54)",
   },
+  debug: {
+    accent: "#f472b6",
+    background: "rgba(244, 114, 182, 0.13)",
+    border: "rgba(244, 114, 182, 0.54)",
+  },
   effect: {
     accent: "#e5e7eb",
     background: "rgba(229, 231, 235, 0.1)",
@@ -64,6 +69,16 @@ export const portTypeTones: Record<string, Tone> = {
     accent: "#f87171",
     background: "rgba(248, 113, 113, 0.13)",
     border: "rgba(248, 113, 113, 0.54)",
+  },
+  output: {
+    accent: "#e5e7eb",
+    background: "rgba(229, 231, 235, 0.1)",
+    border: "rgba(229, 231, 235, 0.42)",
+  },
+  parameter: {
+    accent: "#d4d4d8",
+    background: "rgba(212, 212, 216, 0.1)",
+    border: "rgba(212, 212, 216, 0.42)",
   },
   quality: {
     accent: "#c084fc",

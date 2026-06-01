@@ -54,45 +54,48 @@ const smoke = new WispySmokeVFX({
   quality: "high",
   gridResolution: "high",
   worldPosition: [0, 0, 0],
-  spawnRate: 1200,
-  lifetime: 6.5,
-  radius: 0.45,
-  height: 9.5,
-  density: 0.68,
-  baseDensity: 1.18,
-  opacity: 0.74,
-  riseSpeed: 2.3,
-  buoyantLift: 2.6,
-  turbulence: 4.8,
-  curlStrength: 6.4,
-  vorticityConfinement: 8.5,
+  spawnRate: 1350,
+  lifetime: 8.2,
+  radius: 0.38,
+  height: 7.4,
+  density: 0.9,
+  baseDensity: 1.85,
+  opacity: 0.86,
+  riseSpeed: 1.85,
+  buoyantLift: 2.8,
+  turbulence: 5,
+  curlStrength: 7.2,
+  vorticityConfinement: 12.5,
   wind: [0, 0, 0],
-  sourceVelocity: [0, 0.75, 0],
+  sourceVelocity: [0, 0.72, 0],
   vortexStrength: 0,
-  pressureIterations: 10,
+  pressureIterations: 16,
   diffusion: 0,
   diffusionIterations: 0,
-  advectionMode: "trilinear",
-  sourceTemperature: 1.28,
-  plumeTaper: 0.56,
-  emissionColor: "#ffbb77",
-  emissionIntensity: 1.25,
-  absorption: 11.8,
-  scattering: 2.1,
-  detailScale: 32,
-  detailStrength: 7.2,
-  detailSpeed: 0.95,
+  advectionMode: "maccormack",
+  sourceTemperature: 1.1,
+  plumeTaper: 0.12,
+  emissionColor: "#b8bcc0",
+  emissionIntensity: 0,
+  absorption: 10.8,
+  scattering: 2.15,
+  detailScale: 18,
+  detailStrength: 3.8,
+  detailSpeed: 0.45,
   detailOctaves: 4,
+  flowWarpStrength: 1.05,
+  lightDirection: [0.35, 0.85, 0.25],
+  phaseAnisotropy: 0.32,
   sourceGlowEnabled: false,
   sourceGlowColor: "#ffaa66",
   sourceGlowIntensity: 0,
   sourceGlowRadius: 1.15,
   blendMode: "normal",
-  renderStepScale: 1,
-  shadowQuality: 6,
-  shadowStrength: 1.15,
+  renderStepScale: 1.1,
+  shadowQuality: 8,
+  shadowStrength: 1.65,
   debugView: "final",
-  color: "#aabbcc",
+  color: "#b8bcc0",
 });
 
 scene.add(smoke.object3D);
@@ -102,7 +105,7 @@ function frame(deltaSeconds: number, elapsedSeconds: number) {
 }
 ```
 
-The exported class depends on `three` and, for the quality path, Three's `three/webgpu`, `three/tsl`, and raymarching example helper modules. It does not depend on React, the builder app, or ThreeFX workspace packages.
+The exported class depends on `three` and, for the quality path, Three's `three/webgpu`, `three/tsl`, and raymarching example helper modules. Pass a `THREE.WebGPURenderer` with `backendMode: "auto"` or `"webgpu"` to run the Eulerian solver; the effect logs a one-time warning if it falls back to the compatibility particle path. The builder preview uses AgX tone mapping. It does not depend on React, the builder app, or ThreeFX workspace packages.
 
 ## Package Structure
 
@@ -127,7 +130,7 @@ pnpm format
 
 ## Current Limitations
 
-- The high-quality smoke backend requires a WebGPU renderer. It runs a low-resolution cubic Eulerian grid (`32^3` through `96^3`) with TSL compute passes for source injection, advection, optional diffusion, buoyancy/wind, curl and vorticity confinement, obstacle masking, divergence, Jacobi pressure solve, projection, and render-volume packing. Rendering raymarches simulated density/temperature with absorption, scattering, source glow, self-shadow sampling, procedural detail, and debug views. The compatibility backend is intentionally lower fidelity.
+- The high-quality smoke backend requires a WebGPU renderer. It runs a cubic Eulerian grid (`32^3` through `96^3`) with TSL compute passes for source injection, semi-Lagrangian or MacCormack advection, optional diffusion, gradient-driven buoyancy/wind, curl and vorticity confinement, obstacle masking, divergence, Jacobi pressure solve, projection, and render-volume packing. Rendering raymarches simulated density/temperature with absorption, phase-biased scattering, flow-warped procedural detail, multi-tap self-shadow sampling, soft top/bottom fades, and debug views. The compatibility backend is intentionally lower fidelity.
 - The graph compiler currently targets the Wispy Smoke vertical slice only.
 - Exported code is TypeScript source, not an npm package artifact yet.
 - Visual regression and deeper GPU performance benchmarks are planned but not implemented.

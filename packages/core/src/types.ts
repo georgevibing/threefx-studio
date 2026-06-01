@@ -124,8 +124,11 @@ export interface WispySmokeRenderConfig {
   readonly detailScale: number;
   readonly detailSpeed: number;
   readonly detailStrength: number;
+  readonly flowWarpStrength: number;
+  readonly lightDirection: Vec3;
   readonly opacity: number;
   readonly opacityRamp: CurveValue;
+  readonly phaseAnisotropy: number;
   readonly plumeTaper: number;
   readonly renderStepScale: number;
   readonly scattering: number;

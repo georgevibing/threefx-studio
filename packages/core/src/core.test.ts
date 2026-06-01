@@ -99,7 +99,7 @@ describe("@threefx/core", () => {
 
     const spawnRatePort = registry.get("emitter.sphere")?.ports.find((port) => port.id === "spawnRate");
     expect(spawnRatePort).toMatchObject({
-      defaultValue: 1200,
+      defaultValue: 1350,
       direction: "input",
       effectParameterId: "spawnRate",
       group: "Emission",
@@ -122,6 +122,9 @@ describe("@threefx/core", () => {
         "detailStrength",
         "detailSpeed",
         "detailOctaves",
+        "flowWarpStrength",
+        "lightDirection",
+        "phaseAnisotropy",
         "shadowStrength",
       ]),
     );
@@ -199,7 +202,7 @@ describe("@threefx/core", () => {
     expect(first.ir?.nodes.map((node) => node.id)).toContain("volume_render");
     expect(first.ir?.runtimeConfig.emitters).toHaveLength(1);
     expect(first.ir?.runtimeConfig.forces.length).toBeGreaterThanOrEqual(2);
-    expect(first.ir?.runtimeConfig.solver.advectionMode).toBe("trilinear");
+    expect(first.ir?.runtimeConfig.solver.advectionMode).toBe("maccormack");
   });
 
   it("compiles stable runtime config arrays for multiple emitters, forces, and obstacles", () => {
@@ -282,6 +285,9 @@ describe("@threefx/core", () => {
         "detailStrength",
         "detailSpeed",
         "detailOctaves",
+        "flowWarpStrength",
+        "lightDirection",
+        "phaseAnisotropy",
         "sourceGlowColor",
         "debugView",
         "quality",
@@ -294,7 +300,7 @@ describe("@threefx/core", () => {
     expect(
       WISPY_SMOKE_PARAMETER_METADATA.find((parameter) => parameter.id === "renderStepScale")
         ?.defaultValue,
-    ).toBe(1);
+    ).toBe(1.1);
   });
 
   it("keeps runtime config fallbacks aligned with metadata defaults", () => {
@@ -306,6 +312,9 @@ describe("@threefx/core", () => {
     expect(config.render.renderStepScale).toBe(defaults.renderStepScale);
     expect(config.render.detailOctaves).toBe(defaults.detailOctaves);
     expect(config.render.detailSpeed).toBe(defaults.detailSpeed);
+    expect(config.render.flowWarpStrength).toBe(defaults.flowWarpStrength);
+    expect(config.render.lightDirection).toEqual(defaults.lightDirection);
+    expect(config.render.phaseAnisotropy).toBe(defaults.phaseAnisotropy);
     expect(config.render.smokeColor).toBe(defaults.color);
     expect(config.sourceGlow.enabled).toBe(defaults.sourceGlowEnabled);
     expect(config.sourceGlow.color).toBe(defaults.sourceGlowColor);

@@ -4080,10 +4080,13 @@ type PreviewRenderer = {
   readonly isWebGPURenderer?: true;
   dispose(): void;
   init?(): Promise<unknown>;
+  outputColorSpace?: string;
   render(scene: unknown, camera: unknown): void;
   setClearColor(color: THREE.ColorRepresentation, alpha?: number): void;
   setPixelRatio(value: number): void;
   setSize(width: number, height: number, updateStyle?: boolean): void;
+  toneMapping?: THREE.ToneMapping;
+  toneMappingExposure?: number;
 };
 
 type WebGPUAdapterLike = {
@@ -4104,6 +4107,12 @@ const PREVIEW_WEBGPU_INIT_TIMEOUT_MS = 6000;
 const PREVIEW_WEBGPU_REQUIRED_STORAGE_BUFFERS_PER_STAGE = 9;
 const PREVIEW_WEBGPU_LIMIT_REQUEST_CAP = 16;
 const CANVAS_FALLBACK_SMOKE_LAYERS = 28;
+
+function configurePreviewRendererColor(renderer: PreviewRenderer): void {
+  renderer.outputColorSpace = THREE.SRGBColorSpace;
+  renderer.toneMapping = THREE.AgXToneMapping;
+  renderer.toneMappingExposure = 1;
+}
 
 function resolvePreviewPixelRatio(renderer: PreviewRenderer, width: number, height: number): number {
   const pixelRatioCap = renderer.isWebGPURenderer
@@ -4659,6 +4668,7 @@ function PreviewViewport({
       }
       started = true;
       window.clearTimeout(startupFallback);
+      configurePreviewRendererColor(renderer);
       renderer.setClearColor("#06080d", 1);
       rendererRef.current = renderer;
 

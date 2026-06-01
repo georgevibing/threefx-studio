@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { createWispySmokeRuntimeConfig, type ParameterMap } from "@threefx/core";
 import { WispySmokeVFX } from "./WispySmokeVFX";
 import { normalizeWispySmokeParams } from "./wispySmokeDefaults";
@@ -31,31 +31,36 @@ describe("WispySmokeVFX", () => {
     const params = normalizeWispySmokeParams();
 
     expect(params.backendMode).toBe("auto");
-    expect(params.gridResolution).toBe("medium");
+    expect(params.gridResolution).toBe("high");
+    expect(params.quality).toBe("high");
     expect(params.baseDensity).toBeGreaterThan(0);
-    expect(params.color).toBe("#aabbcc");
-    expect(params.emissionColor).toBe("#ffbb77");
+    expect(params.color).toBe("#b8bcc0");
+    expect(params.emissionColor).toBe("#b8bcc0");
+    expect(params.emissionIntensity).toBe(0);
     expect(params.blendMode).toBe("normal");
     expect(params.sourceGlowEnabled).toBe(false);
     expect(params.sourceGlowColor).toBe("#ffaa66");
     expect(params.sourceGlowIntensity).toBe(0);
     expect(params.sourceGlowRadius).toBe(1.15);
-    expect(params.pressureIterations).toBe(10);
+    expect(params.pressureIterations).toBe(16);
     expect(params.diffusionIterations).toBe(0);
-    expect(params.advectionMode).toBe("trilinear");
+    expect(params.advectionMode).toBe("maccormack");
     expect(params.debugView).toBe("final");
     expect(params.diffusion).toBe(0);
     expect(params.absorption).toBeGreaterThan(0);
     expect(params.scattering).toBeGreaterThan(0);
     expect(params.detailScale).toBeGreaterThan(0);
     expect(params.detailOctaves).toBeGreaterThanOrEqual(1);
+    expect(params.flowWarpStrength).toBe(1.05);
+    expect(params.lightDirection).toEqual([0.35, 0.85, 0.25]);
+    expect(params.phaseAnisotropy).toBe(0.32);
     expect(params.opacityRamp.length).toBeGreaterThan(2);
     expect("warmGlow" in params).toBe(false);
   });
 
   it("uses the WebGPU eulerian grid backend when a WebGPU renderer is provided", () => {
     const smoke = new WispySmokeVFX({
-      backendMode: "webgpu",
+      backendMode: "auto",
       gridResolution: "low",
       quality: "low",
       renderer: webgpuRenderer,
@@ -65,16 +70,16 @@ describe("WispySmokeVFX", () => {
     smoke.update(1 / 30, 1);
 
     const stats = smoke.getStats();
-    expect(stats.requestedBackend).toBe("webgpu");
+    expect(stats.requestedBackend).toBe("auto");
     expect(stats.backend).toBe("webgpu");
     expect(stats.fallbackActive).toBe(false);
     expect(stats.gridResolution).toEqual([32, 32, 32]);
     expect(stats.gridCells).toBe(32 * 32 * 32);
-    expect(stats.pressureIterations).toBe(10);
-    expect(stats.solverPasses).toBe(21);
+    expect(stats.pressureIterations).toBe(16);
+    expect(stats.solverPasses).toBe(27);
     expect(stats.simulationMs).toBeGreaterThanOrEqual(0);
     expect(stats.renderSteps).toBeGreaterThanOrEqual(16);
-    expect(stats.advectionMode).toBe("trilinear");
+    expect(stats.advectionMode).toBe("maccormack");
     expect(stats.diffusionIterations).toBe(0);
     expect(stats.emitterCount).toBe(1);
     expect(stats.fieldCount).toBe(1);
@@ -174,9 +179,39 @@ describe("WispySmokeVFX", () => {
     smoke.dispose();
   });
 
+  it("keeps WebGPU resources alive for render-only parameter changes", () => {
+    const smoke = new WispySmokeVFX({
+      backendMode: "webgpu",
+      gridResolution: "low",
+      quality: "low",
+      renderer: webgpuRenderer,
+    });
+
+    smoke.update(1 / 60, 1);
+    const initialVolume = smoke.object3D.children.find(
+      (child) => child.name === "WispySmokeVFXEulerianFluidVolume",
+    );
+
+    smoke.setParams({
+      flowWarpStrength: 1.2,
+      lightDirection: [0.1, 0.95, 0.2],
+      phaseAnisotropy: 0.5,
+      shadowStrength: 1.4,
+    });
+    smoke.update(1 / 60, 2);
+
+    const nextVolume = smoke.object3D.children.find(
+      (child) => child.name === "WispySmokeVFXEulerianFluidVolume",
+    );
+    expect(nextVolume).toBe(initialVolume);
+    expect(smoke.getStats().backend).toBe("webgpu");
+    smoke.dispose();
+  });
+
   it("applies combined params and runtime config updates to preview uniforms", () => {
     const smoke = new WispySmokeVFX({ backendMode: "compat" });
     const runtimeConfig = createWispySmokeRuntimeConfig({
+      backendMode: "compat",
       color: "#ff0000",
       opacity: 0.35,
       pressureIterations: 18,
@@ -193,6 +228,7 @@ describe("WispySmokeVFX", () => {
   });
 
   it("uses the lightweight compatibility fallback without WebGPU", () => {
+    const warn = vi.spyOn(globalThis.console, "warn").mockImplementation(() => undefined);
     const smoke = new WispySmokeVFX({ backendMode: "auto", quality: "low", gridResolution: "low" });
 
     smoke.update(1 / 60, 1);
@@ -204,6 +240,11 @@ describe("WispySmokeVFX", () => {
     expect(stats.solverPasses).toBe(0);
     expect(stats.simulationMs).toBe(0);
     expect(stats.renderSteps).toBeGreaterThanOrEqual(16);
+    expect(warn).toHaveBeenCalledTimes(1);
+    expect(warn.mock.calls[0]?.[0]).toContain("compatibility particle fallback");
+    smoke.setParams({ opacity: 0.5 });
+    expect(warn).toHaveBeenCalledTimes(1);
     smoke.dispose();
+    warn.mockRestore();
   });
 });

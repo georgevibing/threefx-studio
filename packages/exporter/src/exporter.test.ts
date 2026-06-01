@@ -52,6 +52,11 @@ describe("@threefx/exporter", () => {
     expect(exported.mainClassSource).toContain("emissionColor");
     expect(exported.mainClassSource).toContain("selfShadow");
     expect(exported.mainClassSource).toContain("valueNoise3D");
+    expect(exported.mainClassSource).toContain("flowWarpStrength");
+    expect(exported.mainClassSource).toContain("phaseAnisotropy");
+    expect(exported.mainClassSource).toContain("lightDirection");
+    expect(exported.mainClassSource).toContain("sampleVec4Range");
+    expect(exported.mainClassSource).toContain('"advectionMode": "maccormack"');
     expect(exported.mainClassSource).toContain("resolveEffectiveGridResolution");
     expect(exported.mainClassSource).not.toContain("triNoise3D");
     expect(exported.mainClassSource).not.toContain("Data3DTexture");
@@ -64,14 +69,20 @@ describe("@threefx/exporter", () => {
     expect(exported.mainClassSource).not.toContain("warmGlow");
     expect(exported.mainClassSource).toContain("update(deltaSeconds");
     expect(exported.usageSnippet).toContain("scene.add(smoke.object3D)");
-    expect(exported.usageSnippet).toContain('gridResolution: "medium"');
-    expect(exported.usageSnippet).toContain('emissionColor: "#ffbb77"');
+    expect(exported.usageSnippet).toContain('gridResolution: "high"');
+    expect(exported.usageSnippet).toContain('emissionColor: "#b8bcc0"');
+    expect(exported.usageSnippet).toContain("emissionIntensity: 0");
     expect(exported.usageSnippet).toContain('blendMode: "normal"');
     expect(exported.usageSnippet).toContain("sourceGlowEnabled: false");
     expect(exported.usageSnippet).toContain("sourceGlowRadius: 1.15");
-    expect(exported.usageSnippet).toContain("renderStepScale: 1");
-    expect(exported.usageSnippet).toContain("pressureIterations: 10");
+    expect(exported.usageSnippet).toContain("flowWarpStrength: 1.05");
+    expect(exported.usageSnippet).toContain("lightDirection: [0.35, 0.85, 0.25]");
+    expect(exported.usageSnippet).toContain("phaseAnisotropy: 0.32");
+    expect(exported.usageSnippet).toContain("renderStepScale: 1.1");
+    expect(exported.usageSnippet).toContain("pressureIterations: 16");
+    expect(exported.usageSnippet).toContain('advectionMode: "maccormack"');
     expect(exported.usageSnippet).toContain('debugView: "final"');
+    expect(exported.usageSnippet).toContain('color: "#b8bcc0"');
     expect(exported.usageSnippet).not.toContain("#ff8800");
   });
 

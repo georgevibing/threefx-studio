@@ -29,6 +29,7 @@ export function normalizeWispySmokeParams(
     sourceVelocity: params.sourceVelocity ?? DEFAULT_WISPY_SMOKE_PARAMS.sourceVelocity,
     sourceGlowColor: params.sourceGlowColor ?? DEFAULT_WISPY_SMOKE_PARAMS.sourceGlowColor,
     gridResolution: params.gridResolution ?? DEFAULT_WISPY_SMOKE_PARAMS.gridResolution,
+    lightDirection: params.lightDirection ?? DEFAULT_WISPY_SMOKE_PARAMS.lightDirection,
     obstaclePosition: params.obstaclePosition ?? DEFAULT_WISPY_SMOKE_PARAMS.obstaclePosition,
     obstacleScale: params.obstacleScale ?? DEFAULT_WISPY_SMOKE_PARAMS.obstacleScale,
     opacityRamp: params.opacityRamp ?? DEFAULT_WISPY_SMOKE_PARAMS.opacityRamp,

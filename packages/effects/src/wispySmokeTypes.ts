@@ -55,6 +55,9 @@ export interface WispySmokeVFXParams {
   readonly detailStrength: number;
   readonly detailSpeed: number;
   readonly detailOctaves: number;
+  readonly flowWarpStrength: number;
+  readonly lightDirection: Vec3;
+  readonly phaseAnisotropy: number;
   readonly shadowStrength: number;
   readonly blendMode: WispySmokeBlendMode;
   readonly sourceGlowEnabled: boolean;

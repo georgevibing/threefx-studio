@@ -555,10 +555,109 @@ button {
   min-width: 0;
   min-height: 0;
   border-right: 1px solid var(--border);
+  outline: none;
 }
 
 .threefx-flow {
   background: var(--canvas);
+}
+
+.canvas-search-popover {
+  position: absolute;
+  z-index: 24;
+  top: 10px;
+  right: 10px;
+  display: grid;
+  width: min(390px, calc(100% - 20px));
+  grid-template-columns: minmax(0, 1fr) 32px 32px;
+  gap: 6px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--popover);
+  box-shadow: 0 18px 48px hsl(0 0% 0% / 0.44);
+  padding: 6px;
+}
+
+.canvas-search-input-wrap {
+  position: relative;
+  min-width: 0;
+}
+
+.canvas-search-input-wrap > svg {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 9px;
+  color: var(--muted-foreground);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.canvas-search-input-wrap input {
+  width: 100%;
+  height: 32px;
+  border: 1px solid var(--input);
+  border-radius: 7px;
+  background: var(--background);
+  color: var(--foreground);
+  padding: 6px 68px 6px 30px;
+  font-size: 12px;
+  line-height: 1.35;
+  outline: none;
+}
+
+.canvas-search-input-wrap input:focus {
+  border-color: var(--ring);
+}
+
+.canvas-search-count {
+  position: absolute;
+  top: 50%;
+  right: 31px;
+  color: var(--muted-foreground);
+  font-family: var(--font-mono);
+  font-size: 11px;
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.canvas-search-clear,
+.canvas-search-nav {
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 7px;
+  background: var(--card);
+  color: var(--muted-foreground);
+  padding: 0;
+  cursor: pointer;
+}
+
+.canvas-search-clear {
+  position: absolute;
+  top: 50%;
+  right: 4px;
+  width: 24px;
+  height: 24px;
+  border: 0;
+  background: transparent;
+  transform: translateY(-50%);
+}
+
+.canvas-search-clear:hover,
+.canvas-search-nav:hover:not(:disabled) {
+  border-color: var(--ring);
+  background: var(--secondary);
+  color: var(--foreground);
+}
+
+.canvas-search-clear svg {
+  display: block;
+}
+
+.canvas-search-nav:disabled {
+  cursor: default;
+  opacity: 0.38;
 }
 
 .threefx-flow,
@@ -660,6 +759,36 @@ button {
       200% repeat-y;
   box-shadow: 0 0 18px var(--selection-blue-shadow);
   animation: threefx-selection-dash 700ms linear infinite;
+}
+
+.graph-node-search-match::before {
+  position: absolute;
+  z-index: 3;
+  inset: -2px;
+  pointer-events: none;
+  content: "";
+  border: 1px solid var(--warning);
+  border-radius: 8px;
+  box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.16);
+}
+
+.graph-node-search-active::before {
+  inset: -3px;
+  border-width: 2px;
+  box-shadow:
+    0 0 0 1px rgba(245, 158, 11, 0.24),
+    0 0 16px rgba(245, 158, 11, 0.22);
+}
+
+.graph-node-selected.graph-node-search-match::before {
+  display: none;
+}
+
+.search-text-highlight {
+  border-radius: 2px;
+  background: #facc15;
+  color: #111111;
+  padding: 0 1px;
 }
 
 .graph-node-header {
@@ -912,6 +1041,20 @@ button {
   font-weight: 700;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.node-parameter-field-row-search-match {
+  border-left: 2px solid var(--warning);
+  padding-left: 6px;
+}
+
+.node-parameter-field-row-search-match .node-parameter-field-title span,
+.node-parameter-group-search-match > .node-parameter-group-trigger {
+  color: var(--foreground);
+}
+
+.node-parameter-group-search-match > .node-parameter-group-trigger {
+  background: var(--warning-bg);
 }
 
 .linked-source-line {

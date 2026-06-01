@@ -20,6 +20,7 @@ import { HexColorInput, HexColorPicker } from "react-colorful";
 import {
   ChevronDown,
   ChevronRight,
+  ChevronUp,
   ChevronsDownUp,
   ChevronsUpDown,
   CircleAlert,
@@ -38,6 +39,7 @@ import {
   Redo2,
   RotateCcw,
   Save,
+  Search,
   Trash2,
   Undo2,
   Upload,
@@ -89,6 +91,22 @@ import {
   type EditorPreset,
   type EditorPresetId,
 } from "./editorPresets";
+import {
+  createNodeSearchMatches,
+  searchGraph,
+  searchHighlightRanges,
+  type GraphSearchResult,
+  type NodeSearchMatchView,
+} from "./graphSearch";
+import {
+  editableInputEntries,
+  formatNodeParameterValue,
+  groupParameterEntries,
+  resolveNodeInputBindings,
+  type NodeInputBindingView,
+  type NodeParameterEntry,
+  type NodeParameterGroup,
+} from "./nodeParameterModel";
 
 type FlowNodeData = {
   readonly definition: NodeDefinition;
@@ -104,6 +122,8 @@ type FlowNodeData = {
     value: ParameterValue,
     options?: ParameterChangeOptions,
   ) => void;
+  readonly searchMatch: NodeSearchMatchView | null;
+  readonly searchQuery: string;
 };
 
 type FlowNode = Node<FlowNodeData, "threefxNode">;
@@ -167,15 +187,6 @@ type NodeMenuState = {
   readonly nodeId: string;
   readonly x: number;
   readonly y: number;
-};
-
-type NodeInputBindingView = {
-  readonly edge: GraphEdge | null;
-  readonly linked: boolean;
-  readonly port: PortDefinition;
-  readonly sourceLabel: string;
-  readonly sourceNode: GraphNode | null;
-  readonly sourcePort: PortDefinition | null;
 };
 
 type NodeDefinitionGroup = {
@@ -281,6 +292,14 @@ const PREVIEW_WEBGL_PIXEL_RATIO_CAP = 2;
 const PREVIEW_WEBGPU_INTERNAL_PIXEL_BUDGET = 1_150_000;
 const PREVIEW_WEBGL_INTERNAL_PIXEL_BUDGET = 2_000_000;
 const DEFAULT_FLOW_VIEWPORT: Viewport = { x: 120, y: 80, zoom: 0.82 };
+const EMPTY_GRAPH_SEARCH_RESULTS: readonly GraphSearchResult[] = [];
+
+function normalizedSearchResultIndex(index: number, count: number): number {
+  if (count <= 0) {
+    return -1;
+  }
+  return Math.max(0, Math.min(index, count - 1));
+}
 
 function loadInitialGraph(): GraphDocument {
   return createEditorPresetGraph(STARTUP_GRAPH_CONFIG.presetId);
@@ -339,33 +358,12 @@ function connectedPorts(edges: readonly GraphEdge[]): Map<string, Set<string>> {
   return result;
 }
 
-function resolveNodeInputBindings(graph: GraphDocument, node: GraphNode): NodeInputBindingView[] {
-  const nodesById = new Map(graph.nodes.map((entry) => [entry.id, entry]));
-  const edgesByTarget = new Map(
-    graph.edges.map((edge) => [`${edge.target}:${edge.targetPort}`, edge] as const),
-  );
-  const definition = defaultNodeRegistry.get(node.type);
-  return (definition?.ports ?? [])
-    .filter((port) => port.direction === "input")
-    .map((port) => {
-      const edge = edgesByTarget.get(`${node.id}:${port.id}`) ?? null;
-      const sourceNode = edge ? (nodesById.get(edge.source) ?? null) : null;
-      const sourcePort = sourceNode && edge ? findNodePort(sourceNode, edge.sourcePort) : null;
-      return {
-        edge,
-        linked: Boolean(edge),
-        port,
-        sourceLabel: sourceNode?.label ?? edge?.source ?? "Unlinked",
-        sourceNode,
-        sourcePort,
-      };
-    });
-}
-
 function graphToFlowNodes(
   graph: GraphDocument,
   selectedNodeIds: ReadonlySet<string>,
   nodeMeasurements: ReadonlyMap<string, FlowNodeMeasurement>,
+  searchMatches: ReadonlyMap<string, NodeSearchMatchView>,
+  searchQuery: string,
   onNodeParameterChange: (
     nodeId: string,
     id: string,
@@ -398,6 +396,8 @@ function graphToFlowNodes(
           onFocusNode,
           onNodeLabelChange,
           onNodeParameterChange,
+          searchMatch: searchMatches.get(node.id) ?? null,
+          searchQuery,
         },
       },
     ];
@@ -1155,12 +1155,16 @@ function isCanvasSelectionStartTarget(target: EventTarget | null): boolean {
   }
   if (
     target.closest(
-      ".react-flow__node, .react-flow__edge, .react-flow__handle, .react-flow__controls, .quick-add, .node-context-menu, .pending-quick-add-edge",
+      ".react-flow__node, .react-flow__edge, .react-flow__handle, .react-flow__controls, .quick-add, .node-context-menu, .canvas-search-popover, .pending-quick-add-edge",
     )
   ) {
     return false;
   }
   return Boolean(target.closest(".react-flow__pane"));
+}
+
+function targetIsInsideElement(target: EventTarget | null, element: Element | null): boolean {
+  return target instanceof Node && Boolean(element?.contains(target));
 }
 
 function selectedNodeIdsInClientRect(
@@ -1190,6 +1194,9 @@ function App() {
   const [selectedEdgeIds, setSelectedEdgeIds] = useState<ReadonlySet<string>>(new Set());
   const [quickAdd, setQuickAdd] = useState<QuickAddState | null>(null);
   const [paletteQuery, setPaletteQuery] = useState("");
+  const [canvasSearchOpen, setCanvasSearchOpen] = useState(false);
+  const [canvasSearchQuery, setCanvasSearchQuery] = useState("");
+  const [canvasSearchActiveIndex, setCanvasSearchActiveIndex] = useState(0);
   const [nodeMenu, setNodeMenu] = useState<NodeMenuState | null>(null);
   const [isMiddlePanning, setIsMiddlePanning] = useState(false);
   const [isNodePaletteExpanded, setIsNodePaletteExpanded] = useState(false);
@@ -1213,6 +1220,9 @@ function App() {
   const [isApple] = useState(() => isApplePlatform());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canvasPanelRef = useRef<HTMLDivElement | null>(null);
+  const canvasSearchInputRef = useRef<HTMLInputElement | null>(null);
+  const canvasSearchPopoverRef = useRef<HTMLDivElement | null>(null);
+  const canvasSearchFocusedResultKeyRef = useRef<string | null>(null);
   const nodePaletteRef = useRef<HTMLElement | null>(null);
   const nodePaletteSearchInputRef = useRef<HTMLInputElement | null>(null);
   const pendingMoveSnapshotRef = useRef<EditorSnapshot | null>(null);
@@ -1388,6 +1398,41 @@ function App() {
       input?.select();
     });
   }, [isNodePaletteExpanded]);
+
+  const focusCanvasSearchInput = useCallback((selectText = false) => {
+    window.requestAnimationFrame(() => {
+      const input = canvasSearchInputRef.current;
+      if (!input) {
+        return;
+      }
+      input.focus();
+      if (selectText) {
+        input.select();
+      }
+    });
+  }, []);
+
+  const openCanvasSearch = useCallback(() => {
+    canvasSearchFocusedResultKeyRef.current = null;
+    setCanvasSearchOpen(true);
+    focusCanvasSearchInput(true);
+  }, [focusCanvasSearchInput]);
+
+  const dismissCanvasSearch = useCallback(() => {
+    canvasSearchFocusedResultKeyRef.current = null;
+    setCanvasSearchOpen(false);
+  }, []);
+
+  const updateCanvasSearchQuery = useCallback((query: string) => {
+    canvasSearchFocusedResultKeyRef.current = null;
+    setCanvasSearchQuery(query);
+    setCanvasSearchActiveIndex(0);
+  }, []);
+
+  const clearCanvasSearchQuery = useCallback(() => {
+    updateCanvasSearchQuery("");
+    focusCanvasSearchInput(false);
+  }, [focusCanvasSearchInput, updateCanvasSearchQuery]);
 
   const commitGraphChange = useCallback(
     (
@@ -1657,6 +1702,85 @@ function App() {
     [getNodes, graph.nodes, setCenter],
   );
 
+  const isCanvasSearchActive = canvasSearchOpen && canvasSearchQuery.trim().length > 0;
+  const canvasSearchResults = useMemo(
+    () => (isCanvasSearchActive ? searchGraph(graph, canvasSearchQuery) : EMPTY_GRAPH_SEARCH_RESULTS),
+    [canvasSearchQuery, graph, isCanvasSearchActive],
+  );
+  const canvasSearchResultCount = canvasSearchResults.length;
+  const visibleCanvasSearchIndex = normalizedSearchResultIndex(
+    canvasSearchActiveIndex,
+    canvasSearchResultCount,
+  );
+  const activeCanvasSearchResult =
+    visibleCanvasSearchIndex >= 0 ? canvasSearchResults[visibleCanvasSearchIndex] : null;
+  const canvasNodeSearchMatches = useMemo(
+    () =>
+      isCanvasSearchActive
+        ? createNodeSearchMatches(canvasSearchResults, activeCanvasSearchResult?.key ?? null)
+        : new Map<string, NodeSearchMatchView>(),
+    [activeCanvasSearchResult?.key, canvasSearchResults, isCanvasSearchActive],
+  );
+
+  useEffect(() => {
+    setCanvasSearchActiveIndex((current) =>
+      canvasSearchResultCount === 0
+        ? 0
+        : Math.max(0, Math.min(current, canvasSearchResultCount - 1)),
+    );
+  }, [canvasSearchResultCount]);
+
+  const focusCanvasSearchResult = useCallback(
+    (index: number) => {
+      const result = canvasSearchResults[index];
+      if (!result) {
+        return;
+      }
+      canvasSearchFocusedResultKeyRef.current = result.key;
+      setCanvasSearchActiveIndex(index);
+      focusGraphNode(result.nodeId);
+      focusCanvasSearchInput(false);
+    },
+    [canvasSearchResults, focusCanvasSearchInput, focusGraphNode],
+  );
+
+  const jumpCanvasSearchResult = useCallback(
+    (direction: -1 | 1) => {
+      if (canvasSearchResultCount === 0) {
+        return;
+      }
+      const currentIndex = visibleCanvasSearchIndex >= 0 ? visibleCanvasSearchIndex : 0;
+      const nextIndex =
+        (currentIndex + direction + canvasSearchResultCount) % canvasSearchResultCount;
+      focusCanvasSearchResult(nextIndex);
+    },
+    [canvasSearchResultCount, focusCanvasSearchResult, visibleCanvasSearchIndex],
+  );
+
+  const confirmOrJumpCanvasSearchResult = useCallback(
+    (direction: -1 | 1) => {
+      if (canvasSearchResultCount === 0 || visibleCanvasSearchIndex < 0) {
+        return;
+      }
+      const activeResult = canvasSearchResults[visibleCanvasSearchIndex];
+      if (!activeResult) {
+        return;
+      }
+      if (canvasSearchFocusedResultKeyRef.current !== activeResult.key) {
+        focusCanvasSearchResult(visibleCanvasSearchIndex);
+        return;
+      }
+      jumpCanvasSearchResult(direction);
+    },
+    [
+      canvasSearchResultCount,
+      canvasSearchResults,
+      focusCanvasSearchResult,
+      jumpCanvasSearchResult,
+      visibleCanvasSearchIndex,
+    ],
+  );
+
   const validation = useMemo(() => validateGraphDocument(graph), [graph]);
   const compileResult = useMemo(() => compileGraphToIR(graph), [graph]);
   const flowNodes = useMemo(
@@ -1665,14 +1789,19 @@ function App() {
         graph,
         selectedNodeIds,
         flowNodeMeasurements,
+        canvasNodeSearchMatches,
+        isCanvasSearchActive ? canvasSearchQuery : "",
         updateNodeParameter,
         updateNodeLabel,
         focusGraphNode,
       ),
     [
+      canvasNodeSearchMatches,
+      canvasSearchQuery,
       flowNodeMeasurements,
       focusGraphNode,
       graph,
+      isCanvasSearchActive,
       selectedNodeIds,
       updateNodeLabel,
       updateNodeParameter,
@@ -1901,6 +2030,13 @@ function App() {
 
   const handleCanvasPointerDownCapture = useCallback(
     (event: React.PointerEvent<HTMLDivElement>) => {
+      if (
+        !isEditableEventTarget(event.target) &&
+        event.target instanceof Element &&
+        event.target.closest(".react-flow__pane")
+      ) {
+        event.currentTarget.focus({ preventScroll: true });
+      }
       if (event.button === 1) {
         setIsMiddlePanning(true);
         event.currentTarget.setPointerCapture(event.pointerId);
@@ -2022,6 +2158,8 @@ function App() {
       const target = event.target;
       const isNodePaletteTarget =
         target instanceof window.Node && Boolean(nodePaletteRef.current?.contains(target));
+      const isCanvasSearchTarget = targetIsInsideElement(target, canvasSearchPopoverRef.current);
+      const isCanvasTarget = targetIsInsideElement(target, canvasPanelRef.current);
       if (primary && key === "s") {
         consumeShortcutEvent(event);
         saveLocal();
@@ -2035,6 +2173,16 @@ function App() {
       if (primary && key === "f" && isNodePaletteTarget) {
         consumeShortcutEvent(event);
         focusNodePaletteSearch();
+        return;
+      }
+      if (primary && key === "f" && (isCanvasSearchTarget || (isCanvasTarget && !isEditableEventTarget(target)))) {
+        consumeShortcutEvent(event);
+        openCanvasSearch();
+        return;
+      }
+      if (event.key === "Escape" && canvasSearchOpen) {
+        consumeShortcutEvent(event);
+        dismissCanvasSearch();
         return;
       }
       if (isEditableEventTarget(event.target)) {
@@ -2098,13 +2246,16 @@ function App() {
     },
     [
       clearSelection,
+      canvasSearchOpen,
       deleteSelection,
+      dismissCanvasSearch,
       duplicateSelected,
       focusSelection,
       focusNodePaletteSearch,
       isApple,
       isEditorHydrating,
       loadLocal,
+      openCanvasSearch,
       redoEdit,
       saveLocal,
       selectAllNodes,
@@ -2399,6 +2550,8 @@ function App() {
         <div
           ref={canvasPanelRef}
           className={`canvas-panel ${isMiddlePanning ? "canvas-panel-panning" : ""}`}
+          aria-label="Graph canvas"
+          tabIndex={0}
           onDragOver={(event) => event.preventDefault()}
           onDrop={handleDrop}
           onPointerCancelCapture={handleCanvasPointerEndCapture}
@@ -2448,6 +2601,21 @@ function App() {
             <Background variant={BackgroundVariant.Dots} gap={18} size={1} />
             <Controls />
           </ReactFlow>
+          {canvasSearchOpen ? (
+            <CanvasSearchPopover
+              activeIndex={visibleCanvasSearchIndex}
+              inputRef={canvasSearchInputRef}
+              popoverRef={canvasSearchPopoverRef}
+              query={canvasSearchQuery}
+              resultCount={canvasSearchResultCount}
+              onClear={clearCanvasSearchQuery}
+              onConfirmNext={() => confirmOrJumpCanvasSearchResult(1)}
+              onConfirmPrevious={() => confirmOrJumpCanvasSearchResult(-1)}
+              onJumpNext={() => jumpCanvasSearchResult(1)}
+              onJumpPrevious={() => jumpCanvasSearchResult(-1)}
+              onQueryChange={updateCanvasSearchQuery}
+            />
+          ) : null}
           {selectionDrag?.active ? (
             <CanvasSelectionRect drag={selectionDrag} bounds={canvasBounds} />
           ) : null}
@@ -2680,6 +2848,11 @@ function ShortcutDialog({
       keys: ["F"],
     },
     {
+      action: "Find fields",
+      description: "Search canvas nodes and parameters",
+      keys: [shortcutLabel(isApple, "Mod", "F")],
+    },
+    {
       action: "Select all",
       description: "Select every node",
       keys: [shortcutLabel(isApple, "Mod", "A")],
@@ -2898,6 +3071,104 @@ function PresetDialog({
   );
 }
 
+function CanvasSearchPopover({
+  activeIndex,
+  inputRef,
+  popoverRef,
+  query,
+  resultCount,
+  onClear,
+  onConfirmNext,
+  onConfirmPrevious,
+  onJumpNext,
+  onJumpPrevious,
+  onQueryChange,
+}: {
+  readonly activeIndex: number;
+  readonly inputRef: React.MutableRefObject<HTMLInputElement | null>;
+  readonly popoverRef: React.MutableRefObject<HTMLDivElement | null>;
+  readonly query: string;
+  readonly resultCount: number;
+  readonly onClear: () => void;
+  readonly onConfirmNext: () => void;
+  readonly onConfirmPrevious: () => void;
+  readonly onJumpNext: () => void;
+  readonly onJumpPrevious: () => void;
+  readonly onQueryChange: (value: string) => void;
+}) {
+  const displayIndex = resultCount > 0 && activeIndex >= 0 ? activeIndex + 1 : 0;
+  const resultLabel = `${displayIndex}/${resultCount}`;
+  return (
+    <div
+      ref={(element) => {
+        popoverRef.current = element;
+      }}
+      className="canvas-search-popover"
+      onPointerDown={(event) => event.stopPropagation()}
+      onClick={(event) => event.stopPropagation()}
+    >
+      <div className="canvas-search-input-wrap">
+        <Search size={14} aria-hidden="true" />
+        <input
+          ref={(element) => {
+            inputRef.current = element;
+          }}
+          value={query}
+          aria-label="Search canvas fields"
+          placeholder="Find fields"
+          onChange={(event) => onQueryChange(event.target.value)}
+          onKeyDown={(event) => {
+            if (event.key !== "Enter") {
+              return;
+            }
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.shiftKey) {
+              onConfirmPrevious();
+            } else {
+              onConfirmNext();
+            }
+          }}
+        />
+        <span className="canvas-search-count" aria-live="polite">
+          {resultLabel}
+        </span>
+        {query ? (
+          <button
+            type="button"
+            className="canvas-search-clear"
+            aria-label="Clear canvas search"
+            title="Clear search"
+            onClick={onClear}
+          >
+            <X size={13} />
+          </button>
+        ) : null}
+      </div>
+      <button
+        type="button"
+        className="canvas-search-nav"
+        aria-label="Previous canvas search result"
+        title="Previous result"
+        disabled={resultCount === 0}
+        onClick={onJumpPrevious}
+      >
+        <ChevronUp size={14} />
+      </button>
+      <button
+        type="button"
+        className="canvas-search-nav"
+        aria-label="Next canvas search result"
+        title="Next result"
+        disabled={resultCount === 0}
+        onClick={onJumpNext}
+      >
+        <ChevronDown size={14} />
+      </button>
+    </div>
+  );
+}
+
 function CanvasSelectionRect({
   bounds,
   drag,
@@ -2922,112 +3193,6 @@ function CanvasSelectionRect({
   );
 }
 
-function formatNodeParameterValue(value: ParameterValue): string {
-  if (Array.isArray(value)) {
-    return value
-      .map((entry) => (typeof entry === "number" ? entry.toFixed(2) : String(entry)))
-      .join(", ");
-  }
-  if (typeof value === "boolean") {
-    return value ? "Enabled" : "Disabled";
-  }
-  return String(value ?? "");
-}
-
-function hasNodeParameterValue(node: GraphNode, id: string): boolean {
-  return Boolean(node.parameters) && Object.prototype.hasOwnProperty.call(node.parameters, id);
-}
-
-function parameterTypeForPortType(type: PortType): ParameterType | null {
-  switch (type) {
-    case "bool":
-    case "color":
-    case "curve":
-    case "float":
-    case "int":
-    case "quality":
-    case "string":
-    case "vec2":
-    case "vec3":
-      return type;
-    default:
-      return null;
-  }
-}
-
-function defaultValueForPort(port: PortDefinition): ParameterValue {
-  const parameterType = parameterTypeForPortType(port.type);
-  if (port.defaultValue !== undefined) {
-    return port.defaultValue;
-  }
-  return parameterType ? getDefaultParameterNodeValue(parameterType) : null;
-}
-
-function valueForInputPort(
-  node: GraphNode,
-  port: PortDefinition,
-  graphParameters: ParameterMap,
-): ParameterValue {
-  if (hasNodeParameterValue(node, port.id)) {
-    return node.parameters?.[port.id] ?? null;
-  }
-  if (
-    port.effectParameterId &&
-    Object.prototype.hasOwnProperty.call(graphParameters, port.effectParameterId)
-  ) {
-    return graphParameters[port.effectParameterId] ?? null;
-  }
-  return defaultValueForPort(port);
-}
-
-function metadataForInputPort(port: PortDefinition): ParameterMetadata | null {
-  const type = parameterTypeForPortType(port.type);
-  if (!type) {
-    return null;
-  }
-  return {
-    id: port.id,
-    label: port.label,
-    type,
-    defaultValue: defaultValueForPort(port),
-    group: port.group || "Parameters",
-    ...(port.description ? { description: port.description } : {}),
-    ...(port.min !== undefined ? { min: port.min } : {}),
-    ...(port.max !== undefined ? { max: port.max } : {}),
-    ...(port.step !== undefined ? { step: port.step } : {}),
-    ...(port.unit ? { unit: port.unit } : {}),
-    ...(port.options ? { options: port.options } : {}),
-  };
-}
-
-function editableInputEntries(
-  node: GraphNode,
-  definition: NodeDefinition,
-  graphParameters: ParameterMap,
-  inputBindings: readonly NodeInputBindingView[],
-): Array<{
-  readonly binding: NodeInputBindingView | null;
-  readonly metadata: ParameterMetadata;
-  readonly port: PortDefinition;
-  readonly value: ParameterValue;
-}> {
-  const bindingsByPort = new Map(inputBindings.map((binding) => [binding.port.id, binding]));
-  return definition.ports
-    .filter(isEditableValuePort)
-    .map((port) => {
-      const metadata = metadataForInputPort(port);
-      return metadata
-        ? {
-            binding: bindingsByPort.get(port.id) ?? null,
-            metadata,
-            port,
-            value: valueForInputPort(node, port, graphParameters),
-          }
-        : null;
-    })
-    .filter((entry): entry is NonNullable<typeof entry> => Boolean(entry));
-}
-
 function TypePill({ type }: { readonly type: PortType | ParameterType }) {
   const tone = getPortTypeTone(type);
   return (
@@ -3045,6 +3210,37 @@ function TypePill({ type }: { readonly type: PortType | ParameterType }) {
       {String(type).toUpperCase()}
     </span>
   );
+}
+
+function HighlightedText({
+  query,
+  text,
+}: {
+  readonly query: string;
+  readonly text: string;
+}) {
+  const ranges = searchHighlightRanges(text, query);
+  if (ranges.length === 0) {
+    return <>{text}</>;
+  }
+
+  const parts: React.ReactNode[] = [];
+  let cursor = 0;
+  ranges.forEach((range, index) => {
+    if (range.start > cursor) {
+      parts.push(text.slice(cursor, range.start));
+    }
+    parts.push(
+      <mark key={`${range.start}:${range.end}:${index}`} className="search-text-highlight">
+        {text.slice(range.start, range.end)}
+      </mark>,
+    );
+    cursor = range.end;
+  });
+  if (cursor < text.length) {
+    parts.push(text.slice(cursor));
+  }
+  return <>{parts}</>;
 }
 
 function EditableNodeLabel({
@@ -3101,6 +3297,8 @@ function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
     onFocusNode,
     onNodeLabelChange,
     onNodeParameterChange,
+    searchMatch,
+    searchQuery,
   } = data;
   const inputs = definition.ports.filter((port) => port.direction === "input");
   const outputs = definition.ports.filter((port) => port.direction === "output");
@@ -3118,7 +3316,14 @@ function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
 
   return (
     <article
-      className={`graph-node ${selected ? "graph-node-selected" : ""}`}
+      className={[
+        "graph-node",
+        selected ? "graph-node-selected" : "",
+        searchMatch ? "graph-node-search-match" : "",
+        searchMatch?.active ? "graph-node-search-active" : "",
+      ]
+        .filter(Boolean)
+        .join(" ")}
       style={nodeKindToneStyle(definition.kind)}
     >
       {inputs.map((port, index) => (
@@ -3143,7 +3348,9 @@ function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
         {isParameterNode ? (
           <EditableNodeLabel node={node} onNodeLabelChange={onNodeLabelChange} />
         ) : (
-          <span>{node.label}</span>
+          <span>
+            <HighlightedText text={node.label} query={searchQuery} />
+          </span>
         )}
         <div className="graph-node-header-meta">
           {parameterType ? <TypePill type={parameterType} /> : null}
@@ -3155,18 +3362,20 @@ function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
       <div className="port-grid">
         <div className="port-column">
           {inputs.map((port) => (
-            <PortLabel key={port.id} port={port} side="left" />
+            <PortLabel key={port.id} port={port} query={searchQuery} side="left" />
           ))}
         </div>
         <div className="port-column port-column-right">
           {outputs.map((port) => (
-            <PortLabel key={port.id} port={port} side="right" />
+            <PortLabel key={port.id} port={port} query={searchQuery} side="right" />
           ))}
         </div>
       </div>
       {isParameterNode && parameterType ? (
         <ParameterNodeValuePanel
           node={node}
+          searchQuery={searchQuery}
+          searchMatch={searchMatch}
           type={parameterType}
           onNodeParameterChange={onNodeParameterChange}
         />
@@ -3176,9 +3385,11 @@ function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
           node={node}
           onFocusNode={onFocusNode}
           onNodeParameterChange={onNodeParameterChange}
+          searchQuery={searchQuery}
+          searchMatch={searchMatch}
         />
       )}
-      {!isParameterNode && parameterSummary ? (
+      {!isParameterNode && parameterSummary && !searchMatch ? (
         <div className="node-value" title={parameterSummary}>
           {parameterSummary}
         </div>
@@ -3187,42 +3398,46 @@ function ThreeFXNode({ data, selected }: NodeProps<FlowNode>) {
   );
 }
 
-type NodeParameterEntry = ReturnType<typeof editableInputEntries>[number];
-
-function groupParameterEntries(
-  entries: readonly NodeParameterEntry[],
-): Array<{ group: string; entries: readonly NodeParameterEntry[] }> {
-  const grouped = new Map<string, NodeParameterEntry[]>();
-  for (const entry of entries) {
-    const group = entry.metadata.group || "Parameters";
-    grouped.set(group, [...(grouped.get(group) ?? []), entry]);
-  }
-  return [...grouped.entries()].map(([group, groupEntries]) => ({
-    group,
-    entries: groupEntries,
-  }));
-}
-
 function defaultParameterGroupExpansion(
-  groups: readonly { group: string; entries: readonly NodeParameterEntry[] }[],
+  groups: readonly NodeParameterGroup[],
 ): Record<string, boolean> {
   return Object.fromEntries(groups.map((group) => [group.group, false]));
 }
 
 function parameterGroupSignature(
-  groups: readonly { group: string; entries: readonly NodeParameterEntry[] }[],
+  groups: readonly NodeParameterGroup[],
 ): string {
   return groups
     .map((group) => `${group.group}:${group.entries.map((entry) => entry.metadata.id).join(",")}`)
     .join("|");
 }
 
+function parameterGroupsVisibleForSearch(
+  groups: readonly NodeParameterGroup[],
+  searchMatch: NodeSearchMatchView | null,
+): NodeParameterGroup[] {
+  if (!searchMatch) {
+    return [...groups];
+  }
+  return groups.flatMap((group) => {
+    const groupMatches = searchMatch.directGroupIds.has(group.group);
+    const entries = groupMatches
+      ? group.entries
+      : group.entries.filter((entry) => searchMatch.fieldIds.has(entry.metadata.id));
+    return entries.length > 0 ? [{ group: group.group, entries }] : [];
+  });
+}
+
 function ParameterNodeValuePanel({
   node,
+  searchQuery,
+  searchMatch,
   type,
   onNodeParameterChange,
 }: {
   readonly node: GraphNode;
+  readonly searchQuery: string;
+  readonly searchMatch: NodeSearchMatchView | null;
   readonly type: ParameterType;
   readonly onNodeParameterChange: (
     nodeId: string,
@@ -3248,9 +3463,15 @@ function ParameterNodeValuePanel({
       onDoubleClick={(event) => event.stopPropagation()}
     >
       <div className="node-parameter-field-list">
-        <div className="node-parameter-field-row">
+        <div
+          className={`node-parameter-field-row ${
+            searchMatch ? "node-parameter-field-row-search-match" : ""
+          }`}
+        >
           <div className="node-parameter-field-title">
-            <span>{metadata.label}</span>
+            <span>
+              <HighlightedText text={metadata.label} query={searchQuery} />
+            </span>
           </div>
           <ParameterField
             hideLabel
@@ -3269,6 +3490,8 @@ function NodeParameterPanel({
   node,
   onFocusNode,
   onNodeParameterChange,
+  searchQuery,
+  searchMatch,
 }: {
   readonly entries: readonly NodeParameterEntry[];
   readonly node: GraphNode;
@@ -3279,8 +3502,14 @@ function NodeParameterPanel({
     value: ParameterValue,
     options?: ParameterChangeOptions,
   ) => void;
+  readonly searchQuery: string;
+  readonly searchMatch: NodeSearchMatchView | null;
 }) {
   const parameterGroups = useMemo(() => groupParameterEntries(entries), [entries]);
+  const visibleParameterGroups = useMemo(
+    () => parameterGroupsVisibleForSearch(parameterGroups, searchMatch),
+    [parameterGroups, searchMatch],
+  );
   const signature = useMemo(() => parameterGroupSignature(parameterGroups), [parameterGroups]);
   const [expandedGroups, setExpandedGroups] = useState<Record<string, boolean>>(() =>
     defaultParameterGroupExpansion(parameterGroups),
@@ -3305,11 +3534,15 @@ function NodeParameterPanel({
     [parameterGroups],
   );
 
-  if (parameterGroups.length === 0) {
+  if (visibleParameterGroups.length === 0) {
     return null;
   }
 
-  const parameterCount = parameterGroups.reduce((count, group) => count + group.entries.length, 0);
+  const searchMode = Boolean(searchMatch);
+  const parameterCount = visibleParameterGroups.reduce(
+    (count, group) => count + group.entries.length,
+    0,
+  );
   const expandedCount = parameterGroups.filter((group) => expandedGroups[group.group]).length;
   const allGroupsExpanded = expandedCount === parameterGroups.length;
 
@@ -3325,7 +3558,8 @@ function NodeParameterPanel({
         <div className="node-parameter-panel-actions">
           <span className="node-parameter-count">{parameterCount}</span>
           <ExpandCollapseAllButton
-            allExpanded={allGroupsExpanded}
+            allExpanded={searchMode || allGroupsExpanded}
+            disabled={searchMode}
             targetLabel={`${node.label} parameter groups`}
             onCollapseAll={() => setAllGroupsExpanded(false)}
             onExpandAll={() => setAllGroupsExpanded(true)}
@@ -3333,18 +3567,31 @@ function NodeParameterPanel({
         </div>
       </div>
       <div className="node-parameter-groups">
-        {parameterGroups.map((group) => {
-          const expanded = expandedGroups[group.group] ?? false;
+        {visibleParameterGroups.map((group) => {
+          const expanded = searchMode || (expandedGroups[group.group] ?? false);
+          const groupMatches = searchMatch?.directGroupIds.has(group.group) ?? false;
           return (
-            <section key={group.group} className="node-parameter-group">
+            <section
+              key={group.group}
+              className={`node-parameter-group ${
+                groupMatches ? "node-parameter-group-search-match" : ""
+              }`}
+            >
               <button
                 type="button"
                 className="node-parameter-group-trigger"
                 aria-expanded={expanded}
-                onClick={() => toggleGroup(group.group)}
+                aria-disabled={searchMode ? "true" : undefined}
+                onClick={() => {
+                  if (!searchMode) {
+                    toggleGroup(group.group);
+                  }
+                }}
               >
                 {expanded ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
-                <span>{group.group}</span>
+                <span>
+                  <HighlightedText text={group.group} query={searchQuery} />
+                </span>
                 <small>{group.entries.length}</small>
               </button>
               {expanded ? (
@@ -3356,6 +3603,8 @@ function NodeParameterPanel({
                       node={node}
                       onFocusNode={onFocusNode}
                       onNodeParameterChange={onNodeParameterChange}
+                      searchQuery={searchQuery}
+                      searchMatched={searchMatch?.fieldIds.has(entry.metadata.id) ?? false}
                     />
                   ))}
                 </div>
@@ -3373,6 +3622,8 @@ function NodeParameterField({
   node,
   onFocusNode,
   onNodeParameterChange,
+  searchQuery,
+  searchMatched,
 }: {
   readonly entry: NodeParameterEntry;
   readonly node: GraphNode;
@@ -3383,16 +3634,22 @@ function NodeParameterField({
     value: ParameterValue,
     options?: ParameterChangeOptions,
   ) => void;
+  readonly searchQuery: string;
+  readonly searchMatched: boolean;
 }) {
   const binding = entry.binding;
   const sourceNode = binding?.sourceNode ?? null;
   return (
     <div
-      className="node-parameter-field-row"
+      className={`node-parameter-field-row ${
+        searchMatched ? "node-parameter-field-row-search-match" : ""
+      }`}
       data-linked-state={binding?.linked ? "linked" : "local"}
     >
       <div className="node-parameter-field-title">
-        <span>{entry.metadata.label}</span>
+        <span>
+          <HighlightedText text={entry.metadata.label} query={searchQuery} />
+        </span>
         <TypePill type={entry.metadata.type} />
       </div>
       {binding?.linked ? (
@@ -3401,10 +3658,12 @@ function NodeParameterField({
           <span>Source</span>
           {sourceNode ? (
             <button type="button" onClick={() => onFocusNode(sourceNode.id)}>
-              {binding.sourceLabel}
+              <HighlightedText text={binding.sourceLabel} query={searchQuery} />
             </button>
           ) : (
-            <strong>{binding.sourceLabel}</strong>
+            <strong>
+              <HighlightedText text={binding.sourceLabel} query={searchQuery} />
+            </strong>
           )}
         </div>
       ) : (
@@ -3450,9 +3709,11 @@ function PortKnob({
 
 function PortLabel({
   port,
+  query,
   side,
 }: {
   readonly port: PortDefinition;
+  readonly query: string;
   readonly side: "left" | "right";
 }) {
   const isSource = side === "right";
@@ -3464,7 +3725,9 @@ function PortLabel({
       style={portToneStyle(port.type)}
       title={describePort(port)}
     >
-      <span>{port.label}</span>
+      <span>
+        <HighlightedText text={port.label} query={query} />
+      </span>
     </div>
   );
 }

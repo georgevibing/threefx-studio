@@ -49,7 +49,6 @@ import {
   canConnectPorts,
   compileGraphToIR,
   createWispySmokeRuntimeConfig,
-  createWispySmokeGraph,
   defaultNodeRegistry,
   deserializeGraphDocument,
   findNodePort,
@@ -177,8 +176,17 @@ type SelectionDragState = {
   readonly start: { readonly x: number; readonly y: number };
 };
 
+type StartupGraphSource = "preset" | "saved-graph";
+
 const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph:v1";
 const NODE_PALETTE_VISIBLE_STORAGE_KEY = "threefx-studio:node-palette-visible:v1";
+const STARTUP_GRAPH_CONFIG: {
+  readonly presetId: EditorPresetId;
+  readonly source: StartupGraphSource;
+} = {
+  presetId: "wispy-smoke",
+  source: "preset",
+};
 const editorPersistence = createLocalStorageEditorPersistence(LOCAL_STORAGE_KEY);
 const nodePaletteVisibilityPersistence = createLocalStorageEditorPreference<boolean>(
   NODE_PALETTE_VISIBLE_STORAGE_KEY,
@@ -260,7 +268,11 @@ const PREVIEW_WEBGL_INTERNAL_PIXEL_BUDGET = 2_000_000;
 const DEFAULT_FLOW_VIEWPORT: Viewport = { x: 120, y: 80, zoom: 0.82 };
 
 function loadInitialGraph(): GraphDocument {
-  return createWispySmokeGraph();
+  return createEditorPresetGraph(STARTUP_GRAPH_CONFIG.presetId);
+}
+
+function shouldHydrateSavedGraphOnStartup(): boolean {
+  return STARTUP_GRAPH_CONFIG.source === "saved-graph";
 }
 
 function viewportForGraph(graph: GraphDocument): Viewport {
@@ -1136,7 +1148,9 @@ function App() {
   const [isNodePaletteVisible, setIsNodePaletteVisible] = useState(false);
   const [isShortcutDialogOpen, setIsShortcutDialogOpen] = useState(false);
   const [isPresetDialogOpen, setIsPresetDialogOpen] = useState(false);
-  const [isEditorHydrating, setIsEditorHydrating] = useState(true);
+  const [isEditorHydrating, setIsEditorHydrating] = useState(() =>
+    shouldHydrateSavedGraphOnStartup(),
+  );
   const [flowNodeMeasurements, setFlowNodeMeasurements] = useState<
     ReadonlyMap<string, FlowNodeMeasurement>
   >(() => new Map());
@@ -1148,7 +1162,9 @@ function App() {
     webgpuLabel: "Checking",
     webgpuSupported: false,
   });
-  const [status, setStatus] = useState("Loading saved graph");
+  const [status, setStatus] = useState(() =>
+    shouldHydrateSavedGraphOnStartup() ? "Loading saved graph" : "Ready",
+  );
   const [isApple] = useState(() => isApplePlatform());
   const fileInputRef = useRef<HTMLInputElement | null>(null);
   const canvasPanelRef = useRef<HTMLDivElement | null>(null);
@@ -1201,6 +1217,9 @@ function App() {
   }, []);
 
   useEffect(() => {
+    if (!shouldHydrateSavedGraphOnStartup()) {
+      return;
+    }
     let disposed = false;
     void editorPersistence
       .load()

@@ -326,8 +326,7 @@ interface SmokeParticle {
 const RUNTIME_SOLVER = "eulerian-fluid-grid";
 const DEFAULT_PARAMS: ${className}Params = ${paramsLiteral(ir.parameterValues)} as ${className}Params;
 const DEFAULT_RUNTIME_CONFIG: WispySmokeRuntimeConfig = ${runtimeConfigLiteral(ir)} as WispySmokeRuntimeConfig;
-const SOURCE_DENSITY_RATE_SCALE = 0.032;
-const SOURCE_VELOCITY_INJECTION_SCALE = 5.8;
+const SOURCE_DENSITY_RATE_SCALE = 0.012;
 
 const QUALITY: Record<WispySmokeQuality, { maxParticles: number; maxRaySteps: number; volumeGrid: Vec3 }> = {
   low: { maxParticles: 64, maxRaySteps: 48, volumeGrid: [32, 32, 32] },
@@ -401,6 +400,7 @@ void main() {
 const VOLUME_RAYMARCH = Fn(({
   absorption,
   baseDensity,
+  debugView,
   detailScale,
   detailSpeed,
   detailStrength,
@@ -408,7 +408,7 @@ const VOLUME_RAYMARCH = Fn(({
   emissionIntensity,
   opacity,
   scattering,
-  shadowSamples,
+  shadowSamples: _shadowSamples,
   shadowStrength,
   smokeColor,
   steps,
@@ -416,77 +416,56 @@ const VOLUME_RAYMARCH = Fn(({
   time,
 }: SmokeRaymarchArgs) => {
   const finalColor = vec4(0).toVar();
-  const lightDir = vec3(0.4, 0.85, 0.2).normalize();
+  const lightDir = vec3(0.4, 0.85, 0.25).normalize();
 
   RaymarchingBox(steps, ({ positionRay }) => {
     const uvw = positionRay.add(0.5).clamp(0.001, 0.999);
-    const packed = texture.sample(uvw).toVar();
+    const packed = texture.sample(uvw);
     const density = packed.r.mul(baseDensity).toVar();
-    const temperature = packed.g;
+    const temperature = packed.g.mul(0.22);
 
     const detailCoord = uvw.mul(detailScale).add(vec3(
-      time.mul(detailSpeed).mul(0.12),
-      time.mul(detailSpeed).mul(-0.19),
-      time.mul(detailSpeed).mul(0.11),
+      time.mul(detailSpeed).mul(0.18),
+      time.mul(detailSpeed).mul(-0.26),
+      time.mul(detailSpeed).mul(0.13),
     ));
     const detail = valueNoise3D(detailCoord).toVar();
-    detail.addAssign(valueNoise3D(detailCoord.mul(2.1)).mul(0.5));
-    detail.addAssign(valueNoise3D(detailCoord.mul(4.3)).mul(0.25));
-    density.assign(density.mul(detail.sub(0.35).mul(detailStrength).add(1).clamp(0.1, 2.8)));
+    detail.addAssign(valueNoise3D(detailCoord.mul(2.8)).mul(0.55));
+    detail.addAssign(valueNoise3D(detailCoord.mul(5.6)).mul(0.32));
+    detail.addAssign(valueNoise3D(detailCoord.mul(11.2)).mul(0.18));
+    detail.assign(detail.div(2.05));
+    density.assign(density.mul(detail.sub(0.48).mul(detailStrength).add(1).clamp(0.18, 2.4)));
 
     const heightRamp = uvw.y;
-    const strandCoord = uvw.mul(vec3(detailScale.mul(0.72), detailScale.mul(1.65), detailScale.mul(0.72))).add(vec3(
-      time.mul(detailSpeed).mul(0.18),
-      time.mul(detailSpeed).mul(-0.46),
-      time.mul(detailSpeed).mul(0.14),
-    ));
-    const strand = valueNoise3D(strandCoord)
-      .add(valueNoise3D(strandCoord.mul(2).add(vec3(13.4, 8.2, 29.7))).mul(0.45))
+    density.assign(density.mul(nodeSmoothstep(0.03, 0.18, heightRamp)));
+    const topFade = nodeSmoothstep(0.78, 0.97, heightRamp).oneMinus();
+    density.assign(density.mul(topFade));
+
+    const beer = density.mul(absorption.mul(0.018)).negate().exp().oneMinus();
+    const sampleAlpha = beer.mul(opacity.mul(0.82)).mul(topFade.mul(0.6).add(0.4)).clamp(0, 0.38).toVar();
+    const shadow = texture.sample(uvw.add(lightDir.mul(0.08)).clamp(0.001, 0.999)).r.mul(0.6)
+      .add(texture.sample(uvw.add(lightDir.mul(0.18)).clamp(0.001, 0.999)).r.mul(0.4));
+    const selfShadow = shadow.mul(absorption.mul(shadowStrength).mul(0.2)).negate().exp().clamp(0.45, 1);
+    const sampleColor = smokeColor.rgb.mul(scattering.mul(0.62)).mul(selfShadow.mul(0.65).add(0.35))
+      .add(emissionColor.rgb.mul(emissionIntensity.mul(0.32)).mul(temperature))
       .toVar();
-    const strandRidge = strand.sub(0.55).mul(2).abs().oneMinus().clamp(0, 1);
-    const filamentGate = nodeSmoothstep(
-      0.28,
-      0.84,
-      detail.div(1.75).clamp(0, 1).mul(0.38).add(strandRidge.mul(0.62)),
-    ).clamp(0, 1);
-    const upperWispWeight = nodeSmoothstep(0.08, 0.88, heightRamp).clamp(0, 1);
-    density.assign(
-      density
-        .mul(mix(float(0.82), mix(float(0.26), float(1.38), filamentGate), upperWispWeight))
-        .mul(mix(float(1), float(0.48), packed.a.mul(nodeSmoothstep(0.28, 0.9, heightRamp))).clamp(0.42, 1))
-        .clamp(0, 2.6),
-    );
 
-    const sideEdge = uvw.x.min(uvw.z).min(uvw.x.oneMinus()).min(uvw.z.oneMinus());
-    const heightFade = nodeSmoothstep(0.02, 0.12, heightRamp)
-      .mul(nodeSmoothstep(0.965, 0.998, heightRamp).oneMinus())
-      .clamp(0, 1);
-    const sideFade = nodeSmoothstep(0.012, 0.07, sideEdge).clamp(0, 1);
-    density.assign(density.mul(heightFade).mul(sideFade).clamp(0, 3.2));
+    If(debugView.greaterThan(0.5), () => {
+      sampleColor.assign(vec3(density.mul(2.0)));
+      sampleAlpha.assign(density.mul(0.7));
+    });
 
-    const shadowBudget = nodeSmoothstep(0.5, 1.5, shadowSamples);
-    const shadow = texture.sample(uvw.add(lightDir.mul(0.06)).clamp(0.001, 0.999)).r
-      .add(texture.sample(uvw.add(lightDir.mul(0.13)).clamp(0.001, 0.999)).r)
-      .mul(0.5);
-    const selfShadow = shadow.mul(absorption).mul(shadowStrength).mul(shadowBudget).negate().exp().clamp(0.25, 1);
-    const beer = density.mul(absorption.mul(0.022)).negate().exp().oneMinus();
-    const alpha = beer.mul(opacity).mul(selfShadow).clamp(0, 0.95);
-    const smokeScatter = smokeColor.rgb.mul(scattering).mul(selfShadow);
-    const neutralGlow = emissionColor.rgb.mul(emissionIntensity).mul(temperature).mul(0.35);
-    const color = smokeScatter.add(neutralGlow).mul(1.1);
-    const contribution = finalColor.a.oneMinus().mul(alpha);
-
-    finalColor.rgb.addAssign(contribution.mul(color));
+    const contribution = finalColor.a.oneMinus().mul(sampleAlpha);
+    finalColor.rgb.addAssign(contribution.mul(sampleColor));
     finalColor.a.addAssign(contribution);
 
-    If(finalColor.a.greaterThanEqual(0.96), () => {
+    If(finalColor.a.greaterThanEqual(0.92), () => {
       Break();
     });
   });
 
   return finalColor;
 });
-
 function hashVec3(cell: Node<"vec3">): Node<"float"> {
   return cell.x
     .mul(127.1)
@@ -629,7 +608,7 @@ function configFromParams(params: ${className}Params): WispySmokeRuntimeConfig {
     sourceGlow: {
       ...base.sourceGlow,
       color: params.sourceGlowColor,
-      enabled: params.sourceGlowEnabled && params.sourceGlowIntensity > 0,
+      enabled: false,
       intensity: params.sourceGlowIntensity,
       radius: params.sourceGlowRadius,
       softness: params.sourceGlowSoftness,
@@ -650,17 +629,17 @@ function normalizeRuntimeConfig(params: ${className}Params, config: Partial<Wisp
     obstacles: config?.obstacles ?? base.obstacles,
     render: { ...base.render, ...(config?.render ?? {}) },
     solver: { ...base.solver, ...(config?.solver ?? {}) },
-    sourceGlow: { ...base.sourceGlow, ...(config?.sourceGlow ?? {}) },
+    sourceGlow: { ...base.sourceGlow, ...(config?.sourceGlow ?? {}), enabled: false },
     transform: { ...base.transform, ...(config?.transform ?? {}) },
   };
 }
 
 function resolveFluidBounds(params: ${className}Params): VolumeBounds {
   const windSpread = Math.hypot(params.wind[0], params.wind[2]) * params.lifetime * 0.32;
-  const sourceSpread = params.radius * 7.2 + params.turbulence * 0.36 + params.size * 0.38 + windSpread;
-  const authoredSize = params.size * 1.08;
-  const width = Math.max(4.2, sourceSpread, authoredSize, params.height * 0.56);
-  return { depth: width, height: Math.max(0.75, params.height), width };
+  const sourceSpread = params.radius * 5.2 + params.turbulence * 0.22 + params.size * 0.32 + windSpread;
+  const authoredSize = params.size * 0.96;
+  const width = Math.max(4.2, sourceSpread, authoredSize);
+  return { depth: width, height: Math.max(0.75, params.height * 1.55), width };
 }
 
 function resolveEffectiveGridResolution(params: ${className}Params): WispySmokeGridResolution {
@@ -953,19 +932,37 @@ class FluidGrid3D {
       const uvw = this.cellUVW(coord);
       const center = vec3(0.5, 0.08, 0.5);
       const dist = uvw.sub(center).length();
-      const edge0 = this.uniforms.radius.mul(0.28);
-      const sourceMask = nodeSmoothstep(edge0, this.uniforms.radius, dist).oneMinus();
-      const coreMask = nodeSmoothstep(this.uniforms.radius.mul(0.08), this.uniforms.radius.mul(0.42), dist).oneMinus();
-      const thermalPulse = uvw.y.mul(21.0).add(this.uniforms.time.mul(1.7)).sin().mul(0.15).add(0.9);
-      const mask = sourceMask.max(coreMask.mul(0.35));
+      const edge0 = this.uniforms.radius.mul(0.32);
+      const sourceMask = nodeSmoothstep(edge0, this.uniforms.radius, dist).oneMinus().clamp(0, 1);
+      const noiseCoord = uvw.mul(this.uniforms.detailScale.mul(0.55)).add(vec3(
+        this.uniforms.time.mul(0.26),
+        this.uniforms.time.mul(-0.34),
+        this.uniforms.time.mul(0.21),
+      ));
+      const sourceNoise = valueNoise3D(noiseCoord).toVar();
+      sourceNoise.addAssign(valueNoise3D(noiseCoord.mul(2.3)).mul(0.42));
+      sourceNoise.addAssign(valueNoise3D(noiseCoord.mul(4.7)).mul(0.18));
+      sourceNoise.assign(sourceNoise.div(1.6));
+      const sourceStrands = nodeSmoothstep(0.34, 0.78, sourceNoise.add(sourceMask.mul(0.18))).clamp(0, 1);
+      const mask = sourceMask.mul(sourceStrands.mul(0.85).add(0.12));
       const currentDensity = readDensity.element(instanceIndex);
       const currentVelocity = readVelocity.element(instanceIndex);
-      const densityLimit = nodeSmoothstep(0.72, 1.35, currentDensity.x).oneMinus().clamp(0, 1);
-      const densityDelta = mask.mul(this.uniforms.sourceRate).mul(this.uniforms.dt).mul(densityLimit);
-      const temperature = currentDensity.y.max(mask.mul(this.uniforms.sourceTemperature).mul(thermalPulse).clamp(0, 1));
-      const sourceVelocity = this.uniforms.sourceVelocity.add(vec3(0, this.uniforms.riseSpeed.mul(1.4), 0));
-      const velocityDelta = sourceVelocity.mul(mask).mul(this.uniforms.dt).mul(SOURCE_VELOCITY_INJECTION_SCALE);
-      writeDensity.element(instanceIndex).assign(vec4(currentDensity.x.add(densityDelta).clamp(0, 0.98), temperature.clamp(0, 1), currentDensity.z, currentDensity.w));
+      const densityDelta = this.uniforms.sourceRate.mul(this.uniforms.dt).mul(mask);
+      const temperature = currentDensity.y
+        .add(mask.mul(this.uniforms.sourceTemperature).mul(this.uniforms.dt))
+        .max(mask.mul(this.uniforms.sourceTemperature).mul(0.45));
+      const sourceBaseVelocity = this.uniforms.sourceVelocity.add(vec3(0, this.uniforms.riseSpeed.mul(0.62), 0));
+      const sourceBreakupVelocity = vec3(
+        valueNoise3D(noiseCoord.add(vec3(11.7, 3.1, 19.4))).sub(0.5),
+        valueNoise3D(noiseCoord.add(vec3(7.2, 23.4, 31.1))).sub(0.5).mul(0.12),
+        valueNoise3D(noiseCoord.add(vec3(29.3, 17.9, 5.2))).sub(0.5),
+      ).mul(this.uniforms.turbulence).mul(0.48);
+      const velocityDelta = sourceBaseVelocity
+        .add(sourceBreakupVelocity)
+        .sub(currentVelocity.xyz.mul(0.2))
+        .mul(mask)
+        .mul(this.uniforms.dt.mul(3.5));
+      writeDensity.element(instanceIndex).assign(vec4(currentDensity.x.add(densityDelta).clamp(0, 1), temperature.clamp(0, 1), currentDensity.z, sourceNoise.sub(0.26).clamp(0, 1).mul(mask)));
       writeVelocity.element(instanceIndex).assign(vec4(currentVelocity.xyz.add(velocityDelta), 0));
     })().compute(this.cells).setName("${className} Source Injection") as object;
   }
@@ -973,31 +970,43 @@ class FluidGrid3D {
   private createAdvectNode(sourceDensity: Vec4StorageBuffer, sourceVelocity: Vec4StorageBuffer, targetDensity: Vec4StorageBuffer, targetVelocity: Vec4StorageBuffer): object {
     return Fn(() => {
       const coord = this.cellCoord();
+      const uvw = this.cellUVW(coord);
       const velocity = sourceVelocity.element(instanceIndex).xyz;
       const backCoord = coord.sub(velocity.mul(this.uniforms.dt).mul(vec3(this.grid[0], this.grid[1], this.grid[2])).toIVec3());
       const advectedDensity = sourceDensity.element(this.linearIndex(backCoord.x, backCoord.y, backCoord.z));
       const advectedVelocity = sourceVelocity.element(this.linearIndex(backCoord.x, backCoord.y, backCoord.z));
       const neighborDensity = this.neighborDensityAverage(sourceDensity, coord);
-      const densityValue = advectedDensity.x.mul(1 - this.uniforms.densityDissipation.mul(this.uniforms.dt)).mix(neighborDensity, this.uniforms.diffusion).clamp(0, 1);
+      const topOutflowFade = nodeSmoothstep(0.75, 0.96, uvw.y).oneMinus().clamp(0, 1);
+      const densityValue = advectedDensity.x.mul(1 - this.uniforms.densityDissipation.mul(this.uniforms.dt)).mix(neighborDensity, this.uniforms.diffusion).mul(topOutflowFade).clamp(0, 1);
       const temperatureCooling = this.uniforms.densityDissipation.mul(3.2).add(0.18).mul(this.uniforms.dt);
-      const temperatureValue = advectedDensity.y.mul(float(1).sub(temperatureCooling).clamp(0, 1)).clamp(0, 1);
-      targetDensity.element(instanceIndex).assign(vec4(densityValue, temperatureValue, advectedDensity.z, advectedDensity.w));
-      targetVelocity.element(instanceIndex).assign(vec4(advectedVelocity.xyz.mul(1 - this.uniforms.velocityDissipation.mul(this.uniforms.dt)), 0));
+      const temperatureValue = advectedDensity.y.mul(float(1).sub(temperatureCooling).clamp(0, 1)).mul(topOutflowFade).clamp(0, 1);
+      targetDensity.element(instanceIndex).assign(vec4(densityValue, temperatureValue, advectedDensity.z.mul(topOutflowFade), advectedDensity.w.mul(topOutflowFade)));
+      targetVelocity.element(instanceIndex).assign(vec4(advectedVelocity.xyz.mul(1 - this.uniforms.velocityDissipation.mul(this.uniforms.dt)).mul(topOutflowFade), 0));
     })().compute(this.cells).setName("${className} Semi Lagrangian Advection") as object;
   }
 
   private createBuoyancyNode(density: Vec4StorageBuffer, velocity: Vec4StorageBuffer): object {
     return Fn(() => {
-      const packed = density.element(instanceIndex);
-      const currentVelocity = velocity.element(instanceIndex).xyz;
-      const activeMask = packed.x.mul(0.35).add(packed.y.mul(0.65)).clamp(0, 1.25);
-      const thermalLift = packed.y
-        .mul(this.uniforms.buoyancy)
+      const coord = this.cellCoord();
+      const uvw = this.cellUVW(coord);
+      const densitySample = density.element(instanceIndex);
+      const currentVelocity = velocity.element(instanceIndex);
+      const active = densitySample.x.add(densitySample.y.mul(0.35)).clamp(0, 1);
+      const lift = densitySample.y
         .mul(this.uniforms.riseSpeed)
-        .mul(float(0.82).add(activeMask.mul(1.18)))
-        .mul(1.25)
-        .sub(packed.x.mul(0.035));
-      velocity.element(instanceIndex).assign(vec4(currentVelocity.add(this.uniforms.wind.add(vec3(0, thermalLift, 0)).mul(this.uniforms.dt)), 0));
+        .mul(this.uniforms.buoyancy)
+        .mul(1.65);
+      const windForce = this.uniforms.wind.mul(0.35);
+      const radial = vec3(uvw.x.sub(0.5), 0, uvw.z.sub(0.5));
+      const radialLength = dot(radial, radial).sqrt().max(0.001);
+      const expansion = radial.div(radialLength)
+        .mul(active)
+        .mul(nodeSmoothstep(0.16, 0.82, uvw.y))
+        .mul(this.uniforms.riseSpeed.mul(0.22));
+      const nextVelocity = currentVelocity.xyz.add(
+        vec3(windForce.x, lift.add(windForce.y), windForce.z).add(expansion).mul(this.uniforms.dt),
+      );
+      velocity.element(instanceIndex).assign(vec4(nextVelocity, 0));
     })().compute(this.cells).setName("${className} Buoyancy Wind") as object;
   }
 
@@ -1012,7 +1021,19 @@ class FluidGrid3D {
       const front = sourceVelocity.element(this.linearIndex(coord.x, coord.y, coord.z.add(1))).xyz;
       const curl = vec3(up.z.sub(down.z).sub(front.y.sub(back.y)), front.x.sub(back.x).sub(right.z.sub(left.z)), right.y.sub(left.y).sub(up.x.sub(down.x))).mul(0.5);
       const current = sourceVelocity.element(instanceIndex).xyz;
-      targetVelocity.element(instanceIndex).assign(vec4(current.add(curl.mul(this.uniforms.vorticity).mul(this.uniforms.curlStrength).mul(this.uniforms.dt)), 0));
+      const uvw = this.cellUVW(coord);
+      const activeMask = dot(curl, curl).sqrt().clamp(0, 1);
+      const breakupCoord = uvw.mul(this.uniforms.detailScale.mul(0.32)).add(vec3(
+        this.uniforms.time.mul(this.uniforms.detailSpeed).mul(0.18),
+        this.uniforms.time.mul(this.uniforms.detailSpeed).mul(-0.24),
+        this.uniforms.time.mul(this.uniforms.detailSpeed).mul(0.16),
+      ));
+      const breakupForce = vec3(
+        valueNoise3D(breakupCoord.add(vec3(19.1, 5.7, 2.4))).sub(0.5),
+        valueNoise3D(breakupCoord.add(vec3(3.6, 31.8, 11.2))).sub(0.5).mul(0.18),
+        valueNoise3D(breakupCoord.add(vec3(23.4, 13.9, 41.7))).sub(0.5),
+      ).mul(this.uniforms.turbulence).mul(activeMask).mul(this.uniforms.dt.mul(0.75));
+      targetVelocity.element(instanceIndex).assign(vec4(current.add(curl.mul(this.uniforms.vorticity.mul(1.35)).mul(this.uniforms.curlStrength).mul(this.uniforms.dt)).add(breakupForce), 0));
     })().compute(this.cells).setName("${className} Vorticity Confinement") as object;
   }
 
@@ -1056,10 +1077,13 @@ class FluidGrid3D {
 
   private createPackNode(density: Vec4StorageBuffer, velocity: Vec4StorageBuffer): object {
     return Fn(() => {
+      const coord = this.cellCoord();
       const packed = density.element(instanceIndex);
       const speed = dot(velocity.element(instanceIndex).xyz, velocity.element(instanceIndex).xyz).sqrt().clamp(0, 1);
-      const light = float(1).sub(this.neighborDensityAverage(density, this.cellCoord()).mul(this.uniforms.absorption).mul(0.45)).clamp(0.08, 1);
-      textureStore(this.renderTexture, this.cellTextureCoord(), vec4(packed.x, packed.y, light, speed));
+      const neighborDensity = this.neighborDensityAverage(density, coord);
+      const renderDensity = packed.x.mul(0.72).add(neighborDensity.mul(0.16)).mul(packed.w.mul(0.28).add(0.72)).clamp(0, 1.55);
+      const renderTemperature = packed.y.mul(0.5).add(neighborDensity.mul(0.08)).clamp(0, 1.2);
+      textureStore(this.renderTexture, this.cellTextureCoord(), vec4(renderDensity, renderTemperature, speed, packed.w));
     })().compute(this.cells).setName("${className} Render Volume Pack") as object;
   }
 
@@ -1151,7 +1175,7 @@ export class ${className} implements VFXEffect<${className}Params> {
     this.object3D.name = "${className}";
     this.object3D.add(this.points);
     this.sourceGlowGroup.name = "${className}SourceGlow";
-    this.object3D.add(this.sourceGlowGroup);
+    this.sourceGlowGroup.visible = false;
     this.applyTransform();
     this.rebuildSourceGlow();
     this.reallocateCompatibilityParticles();
@@ -1277,27 +1301,7 @@ export class ${className} implements VFXEffect<${className}Params> {
 
   private rebuildSourceGlow(): void {
     this.disposeSourceGlow();
-    if (!this.config.sourceGlow.enabled) return;
-    for (const emitter of this.config.emitters.slice(0, 4)) {
-      const radius = Math.max(0.001, emitter.radius * this.config.sourceGlow.radius);
-      const geometry = new THREE.SphereGeometry(1, 24, 16);
-      const material = new THREE.MeshBasicMaterial({
-        blending: THREE.AdditiveBlending,
-        color: new THREE.Color(this.config.sourceGlow.color),
-        depthTest: false,
-        depthWrite: false,
-        opacity: clamp(this.config.sourceGlow.intensity * 0.22, 0, 1),
-        transparent: true,
-      });
-      const mesh = new THREE.Mesh(geometry, material);
-      mesh.name = "${className}SourceGlowPrimitive";
-      mesh.frustumCulled = false;
-      mesh.renderOrder = 9;
-      mesh.position.set(emitter.position[0], emitter.position[1], emitter.position[2]);
-      mesh.scale.set(radius * emitter.scale[0], radius * emitter.scale[1], radius * emitter.scale[2]);
-      this.sourceGlowGroup.add(mesh);
-      this.sourceGlowMeshes.push(mesh);
-    }
+    this.sourceGlowGroup.visible = false;
   }
 
   private disposeSourceGlow(): void {
@@ -1393,44 +1397,45 @@ const smoke = new ${className}({
   quality: "medium",
   gridResolution: "medium",
   worldPosition: [0, 0, 0],
-  spawnRate: 2800,
-  lifetime: 5.4,
-  radius: 0.44,
-  height: 8.4,
-  density: 1.1,
-  baseDensity: 2.8,
-  opacity: 0.9,
-  riseSpeed: 2.4,
-  buoyantLift: 3.8,
-  turbulence: 4.2,
-  curlStrength: 4.8,
-  vorticityConfinement: 5.5,
+  spawnRate: 1200,
+  lifetime: 6.5,
+  radius: 0.45,
+  height: 9.5,
+  density: 0.68,
+  baseDensity: 1.18,
+  opacity: 0.74,
+  riseSpeed: 2.3,
+  buoyantLift: 2.6,
+  turbulence: 4.8,
+  curlStrength: 6.4,
+  vorticityConfinement: 8.5,
   wind: [0, 0, 0],
   sourceVelocity: [0, 0.75, 0],
-  vortexStrength: 0.14,
+  vortexStrength: 0,
   pressureIterations: 10,
   diffusion: 0,
   diffusionIterations: 0,
   advectionMode: "trilinear",
   sourceTemperature: 1.28,
   plumeTaper: 0.56,
-  emissionColor: "#cfd8dc",
-  emissionIntensity: 0.18,
-  absorption: 5.5,
-  scattering: 2.6,
-  detailScale: 24,
-  detailStrength: 5.2,
+  emissionColor: "#ffbb77",
+  emissionIntensity: 1.25,
+  absorption: 11.8,
+  scattering: 2.1,
+  detailScale: 32,
+  detailStrength: 7.2,
   detailSpeed: 0.95,
   detailOctaves: 4,
   sourceGlowEnabled: false,
-  sourceGlowColor: "#c7d2d8",
-  sourceGlowIntensity: 0.22,
-  blendMode: "additive",
+  sourceGlowColor: "#ffaa66",
+  sourceGlowIntensity: 0,
+  sourceGlowRadius: 1.15,
+  blendMode: "normal",
   renderStepScale: 1,
   shadowQuality: 6,
   shadowStrength: 1.15,
   debugView: "final",
-  color: "#9aa2a6"
+  color: "#aabbcc"
 });
 
 scene.add(smoke.object3D);

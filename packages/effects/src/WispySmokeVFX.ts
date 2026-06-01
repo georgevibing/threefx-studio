@@ -181,7 +181,7 @@ const QUALITY_RANK: Record<WispySmokeVFXParams["quality"], number> = {
 };
 const MAX_RENDER_STEP_SCALE = 1.35;
 const MAX_SHADOW_SAMPLES = 16;
-const MAX_PRESSURE_ITERATIONS = 40;
+const MAX_PRESSURE_ITERATIONS = 80;
 
 const COMPAT_VERTEX_SHADER = `
 attribute float aAlpha;
@@ -2189,9 +2189,10 @@ export class WispySmokeVFX implements VFXEffect<WispySmokeVFXParams> {
         break;
       }
       const ageRatio = clamp(particle.age / Math.max(0.001, particle.lifetime), 0, 1);
+      const densityFadeBase = Math.max(0, 1 - ageRatio * this.params.densityDissipation);
       const lifeFade =
         sampleCurve(this.params.opacityRamp, ageRatio) *
-        Math.pow(1 - ageRatio * this.params.densityDissipation, this.params.dissipation);
+        Math.pow(densityFadeBase, this.params.dissipation);
       const heightFade = 1 - smoothstep(0.82, 1, particle.y / Math.max(0.01, this.params.height));
       this.positions[count * 3] = particle.x;
       this.positions[count * 3 + 1] = particle.y;

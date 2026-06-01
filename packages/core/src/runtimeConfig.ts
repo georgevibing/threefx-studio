@@ -203,8 +203,8 @@ export function createWispySmokeRuntimeConfig(
       detailOctaves: Math.max(1, Math.min(5, intValue(values, "detailOctaves", 4))),
       detailScale: numberValue(values, "detailScale", 18),
       detailSpeed: numberValue(values, "detailSpeed", 0.45),
-      detailStrength: clampedNumberValue(values, "detailStrength", 3.8, 0, 8),
-      flowWarpStrength: clampedNumberValue(values, "flowWarpStrength", 1.05, 0, 2),
+      detailStrength: clampedNumberValue(values, "detailStrength", 3.8, 0, 100),
+      flowWarpStrength: clampedNumberValue(values, "flowWarpStrength", 1.05, 0, 20),
       lightDirection: vec3Value(values, "lightDirection", [0.35, 0.85, 0.25]),
       opacity: numberValue(values, "opacity", 0.86),
       opacityRamp,
@@ -224,7 +224,7 @@ export function createWispySmokeRuntimeConfig(
       diffusion: numberValue(values, "diffusion", 0),
       diffusionIterations: intValue(values, "diffusionIterations", 0),
       gridResolution,
-      pressureIterations: clampedIntValue(values, "pressureIterations", 16, 4, 40),
+      pressureIterations: clampedIntValue(values, "pressureIterations", 16, 4, 80),
       quality,
       seed: intValue(values, "seed", 1337),
       velocityDissipation: numberValue(values, "velocityDissipation", 0.002),
@@ -287,7 +287,7 @@ export function compileWispySmokeRuntimeConfig(
         speed: numberValue(values, "detailSpeed", 0.45),
         strength:
           node.type === "field.fbm"
-            ? clampedNumberValue(values, "detailStrength", 3.8, 0, 8)
+            ? clampedNumberValue(values, "detailStrength", 3.8, 0, 100)
             : numberValue(values, "turbulence", 5),
         type: node.type === "field.fbm" ? "fbm" : "curl",
         vorticityConfinement: numberValue(values, "vorticityConfinement", 12.5),
@@ -355,13 +355,13 @@ export function compileWispySmokeRuntimeConfig(
       detailOctaves: Math.max(1, Math.min(5, intValue(renderValues, "detailOctaves", base.render.detailOctaves))),
       detailScale: numberValue(renderValues, "detailScale", base.render.detailScale),
       detailSpeed: numberValue(renderValues, "detailSpeed", base.render.detailSpeed),
-      detailStrength: clampedNumberValue(renderValues, "detailStrength", base.render.detailStrength, 0, 8),
+      detailStrength: clampedNumberValue(renderValues, "detailStrength", base.render.detailStrength, 0, 100),
       flowWarpStrength: clampedNumberValue(
         renderValues,
         "flowWarpStrength",
         base.render.flowWarpStrength,
         0,
-        2,
+        20,
       ),
       lightDirection: vec3Value(renderValues, "lightDirection", base.render.lightDirection),
       opacity: numberValue(renderValues, "opacity", base.render.opacity),
@@ -400,7 +400,7 @@ export function compileWispySmokeRuntimeConfig(
         "pressureIterations",
         base.solver.pressureIterations,
         4,
-        40,
+        80,
       ),
       quality: stringOption(solverValues, "quality", base.solver.quality, GRID_QUALITIES) as QualityPreset,
       seed: intValue(solverValues, "seed", base.solver.seed),

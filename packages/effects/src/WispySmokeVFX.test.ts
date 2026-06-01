@@ -18,12 +18,30 @@ type CompatMaterialView = {
   };
 };
 
+type CompatAttributeView = {
+  readonly array: ArrayLike<number>;
+};
+
+type CompatGeometryView = {
+  readonly geometry: {
+    readonly getAttribute: (name: string) => CompatAttributeView | undefined;
+  };
+};
+
 function compatMaterial(smoke: WispySmokeVFX): CompatMaterialView {
   const points = smoke.object3D.children.find((child) => "material" in child);
   if (!points || !("material" in points)) {
     throw new Error("Compatibility points material was not found.");
   }
   return points.material as CompatMaterialView;
+}
+
+function compatGeometry(smoke: WispySmokeVFX): CompatGeometryView {
+  const points = smoke.object3D.children.find((child) => "geometry" in child);
+  if (!points || !("geometry" in points)) {
+    throw new Error("Compatibility points geometry was not found.");
+  }
+  return points as CompatGeometryView;
 }
 
 describe("WispySmokeVFX", () => {
@@ -179,6 +197,22 @@ describe("WispySmokeVFX", () => {
     smoke.dispose();
   });
 
+  it("honors extended pressure iteration values", () => {
+    const smoke = new WispySmokeVFX({
+      backendMode: "webgpu",
+      gridResolution: "low",
+      quality: "low",
+      renderer: webgpuRenderer,
+    });
+
+    smoke.setParams({ pressureIterations: 72 });
+    smoke.update(1 / 60, 2);
+
+    expect(smoke.getStats().pressureIterations).toBe(72);
+    expect(smoke.getStats().solverPasses).toBe(83);
+    smoke.dispose();
+  });
+
   it("keeps WebGPU resources alive for render-only parameter changes", () => {
     const smoke = new WispySmokeVFX({
       backendMode: "webgpu",
@@ -244,6 +278,27 @@ describe("WispySmokeVFX", () => {
     expect(warn.mock.calls[0]?.[0]).toContain("compatibility particle fallback");
     smoke.setParams({ opacity: 0.5 });
     expect(warn).toHaveBeenCalledTimes(1);
+    smoke.dispose();
+    warn.mockRestore();
+  });
+
+  it("keeps compatibility fade finite with high density dissipation", () => {
+    const warn = vi.spyOn(globalThis.console, "warn").mockImplementation(() => undefined);
+    const smoke = new WispySmokeVFX({
+      backendMode: "compat",
+      densityDissipation: 100,
+      dissipation: 0.4,
+      quality: "low",
+      spawnRate: 180,
+    });
+
+    smoke.update(0.5, 0.5);
+
+    const alphaAttribute = compatGeometry(smoke).geometry.getAttribute("aAlpha");
+    expect(alphaAttribute).toBeDefined();
+    const alphaValues = Array.from(alphaAttribute?.array ?? []);
+    expect(alphaValues.length).toBeGreaterThan(0);
+    expect(alphaValues.every(Number.isFinite)).toBe(true);
     smoke.dispose();
     warn.mockRestore();
   });

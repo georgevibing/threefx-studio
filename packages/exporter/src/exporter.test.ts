@@ -58,6 +58,9 @@ describe("@threefx/exporter", () => {
     expect(exported.mainClassSource).toContain("sampleVec4Range");
     expect(exported.mainClassSource).toContain('"advectionMode": "maccormack"');
     expect(exported.mainClassSource).toContain("resolveEffectiveGridResolution");
+    expect(exported.mainClassSource).toContain(
+      "return clamp(Math.round(params.pressureIterations), 4, 80);",
+    );
     expect(exported.mainClassSource).not.toContain("triNoise3D");
     expect(exported.mainClassSource).not.toContain("Data3DTexture");
     expect(exported.mainClassSource).not.toContain("SpriteMaterial");

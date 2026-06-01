@@ -719,7 +719,7 @@ function resolveRenderSteps(params: ${className}Params): number {
 }
 
 function resolvePressureIterations(params: ${className}Params): number {
-  return clamp(Math.round(params.pressureIterations), 4, 40);
+  return clamp(Math.round(params.pressureIterations), 4, 80);
 }
 
 function resolveSourceRadius(params: ${className}Params, bounds: VolumeBounds): number {

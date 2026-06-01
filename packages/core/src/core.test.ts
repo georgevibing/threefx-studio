@@ -325,4 +325,18 @@ describe("@threefx/core", () => {
     expect(emitter?.radius).toBe(defaults.radius);
     expect(emitter?.velocity).toEqual(defaults.sourceVelocity);
   });
+
+  it("preserves extended scalar controls in runtime config", () => {
+    const config = createWispySmokeRuntimeConfig({
+      detailStrength: 88,
+      flowWarpStrength: 18,
+      pressureIterations: 72,
+      velocityDissipation: 64,
+    });
+
+    expect(config.render.detailStrength).toBe(88);
+    expect(config.render.flowWarpStrength).toBe(18);
+    expect(config.solver.pressureIterations).toBe(72);
+    expect(config.solver.velocityDissipation).toBe(64);
+  });
 });

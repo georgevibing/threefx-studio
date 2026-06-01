@@ -4022,6 +4022,7 @@ type NumberDragState = {
   readonly pointerId: number;
   readonly startValue: number;
   readonly startX: number;
+  captured: boolean;
   lastValue: number;
   moved: boolean;
 };
@@ -4103,7 +4104,6 @@ function NumberDraftInput({
       inputMode={integer ? "numeric" : "decimal"}
       type="text"
       value={draft}
-      onFocus={() => setEditing(true)}
       onBlur={() => {
         if (dragRef.current) {
           return;
@@ -4114,10 +4114,12 @@ function NumberDraftInput({
       }}
       onChange={(event) => {
         const nextDraft = event.target.value;
+        setEditing(true);
         setDraft(nextDraft);
         commitDraft(nextDraft);
       }}
       onClick={(event) => {
+        event.stopPropagation();
         if (!suppressClickRef.current) {
           return;
         }
@@ -4128,17 +4130,32 @@ function NumberDraftInput({
         if (event.button !== 0) {
           return;
         }
-        event.preventDefault();
+        if (document.activeElement === event.currentTarget) {
+          return;
+        }
         const startValue = parseNumberDraft(draft) ?? value;
         dragRef.current = {
           pointerId: event.pointerId,
           startValue: normalizeValue(startValue),
           startX: event.clientX,
+          captured: false,
           lastValue: normalizeValue(startValue),
           moved: false,
         };
-        event.currentTarget.focus();
-        event.currentTarget.setPointerCapture(event.pointerId);
+        const handleWindowPointerEnd = (windowEvent: PointerEvent) => {
+          if (windowEvent.pointerId !== event.pointerId) {
+            return;
+          }
+          const drag = dragRef.current;
+          if (drag && drag.pointerId === windowEvent.pointerId && !drag.captured) {
+            dragRef.current = null;
+            setDragging(false);
+          }
+          window.removeEventListener("pointerup", handleWindowPointerEnd);
+          window.removeEventListener("pointercancel", handleWindowPointerEnd);
+        };
+        window.addEventListener("pointerup", handleWindowPointerEnd);
+        window.addEventListener("pointercancel", handleWindowPointerEnd);
       }}
       onPointerMove={(event) => {
         const drag = dragRef.current;
@@ -4148,6 +4165,22 @@ function NumberDraftInput({
         const deltaX = event.clientX - drag.startX;
         if (!drag.moved && Math.abs(deltaX) < 3) {
           return;
+        }
+        const selectionStart = event.currentTarget.selectionStart;
+        const selectionEnd = event.currentTarget.selectionEnd;
+        if (
+          !drag.captured &&
+          selectionStart !== null &&
+          selectionEnd !== null &&
+          selectionStart !== selectionEnd
+        ) {
+          dragRef.current = null;
+          setDragging(false);
+          return;
+        }
+        if (!drag.captured) {
+          event.currentTarget.setPointerCapture(event.pointerId);
+          drag.captured = true;
         }
         drag.moved = true;
         setDragging(true);

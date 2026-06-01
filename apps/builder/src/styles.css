@@ -1241,10 +1241,6 @@ button {
 }
 
 .number-draft-input {
-  cursor: ew-resize;
-}
-
-.number-draft-input:focus {
   cursor: text;
 }
 

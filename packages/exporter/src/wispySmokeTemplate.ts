@@ -503,14 +503,16 @@ const VOLUME_RAYMARCH = Fn(({
     const sourceWarmup = nodeSmoothstep(0.0, 0.04, age.add(temperature.mul(0.55)));
     density.assign(density.mul(bottomFade).mul(topFade).mul(sourceWarmup));
 
-    const sourceCore = nodeSmoothstep(emissionThreshold, emissionThreshold.add(0.45), temperature)
+    const effectiveEmissionThreshold = emissionThreshold.clamp(0, 1.2);
+    const thermalCore = temperature.add(density.mul(0.32)).add(emissionIntensity.mul(0.06).clamp(0, 0.75)).clamp(0, 2.8);
+    const sourceCore = nodeSmoothstep(effectiveEmissionThreshold, effectiveEmissionThreshold.add(0.35), thermalCore)
       .mul(nodeSmoothstep(0.22, 0.95, density))
       .mul(nodeSmoothstep(0.02, 0.35, age).oneMinus().mul(0.45).add(0.55))
       .clamp(0, 1);
     const coreEmissionMask = sourceCore.mul(nodeSmoothstep(0.001, 0.02, emissionIntensity)).clamp(0, 1);
-    const effectiveAbsorption = absorption.mul(mix(float(1), float(0.38), coreEmissionMask));
+    const effectiveAbsorption = absorption.mul(mix(float(1), float(0.78), coreEmissionMask));
     const beer = density.mul(effectiveAbsorption.mul(0.026)).negate().exp().oneMinus();
-    const sampleAlpha = beer.mul(opacity.mul(1.08)).mul(topFade.mul(0.45).add(0.55)).mul(mix(float(1), float(0.62), coreEmissionMask)).clamp(0, 0.72).toVar();
+    const sampleAlpha = beer.mul(opacity.mul(1.08)).mul(topFade.mul(0.45).add(0.55)).mul(mix(float(1), float(1.18), coreEmissionMask)).clamp(0, 0.82).toVar();
     const shadowGate1 = nodeSmoothstep(0.5, 1.5, shadowSamples);
     const shadowGate2 = nodeSmoothstep(2.5, 3.5, shadowSamples);
     const shadowGate3 = nodeSmoothstep(5.5, 6.5, shadowSamples);
@@ -526,7 +528,7 @@ const VOLUME_RAYMARCH = Fn(({
     const phaseG2 = phaseG.mul(phaseG);
     const phase = float(1).sub(phaseG2).div(float(1).add(phaseG2).sub(phaseG.mul(2).mul(lightDir.y)).max(0.08)).clamp(0.18, 3.2);
     const sampleColor = smokeColor.rgb.mul(scattering.mul(0.56)).mul(phase.mul(0.46).add(0.54)).mul(selfShadow.mul(0.82).add(0.18))
-      .add(emissionColor.rgb.mul(emissionIntensity.mul(0.52)).mul(sourceCore))
+      .add(emissionColor.rgb.mul(emissionIntensity.mul(0.42)).mul(sourceCore))
       .toVar();
 
     If(debugView.greaterThan(0.5), () => {
@@ -1131,12 +1133,14 @@ class FluidGrid3D {
       sourceNoise.addAssign(valueNoise3D(noiseCoord.mul(4.7)).mul(0.18));
       sourceNoise.assign(sourceNoise.div(1.6));
       const sourceStrands = nodeSmoothstep(0.34, 0.78, sourceNoise.add(sourceMask.mul(0.18))).clamp(0, 1);
-      const mask = sourceMask.mul(sourceStrands.mul(0.72).add(0.28));
+      const sourceCore = nodeSmoothstep(0.42, 0.92, sourceMask).clamp(0, 1);
+      const strandFill = sourceStrands.mul(0.72).add(0.28);
+      const mask = sourceMask.mul(mix(strandFill, float(1), sourceCore.mul(0.85)));
       const currentDensity = readDensity.element(instanceIndex);
       const currentVelocity = readVelocity.element(instanceIndex);
-      const densityDelta = this.uniforms.sourceRate.mul(this.uniforms.dt).mul(mask);
+      const densityDelta = this.uniforms.sourceRate.mul(this.uniforms.dt).mul(mask).mul(sourceCore.mul(0.55).add(1));
       const temperature = currentDensity.y
-        .add(mask.mul(this.uniforms.coreTemperature).mul(this.uniforms.dt.mul(1.4)));
+        .add(mask.mul(this.uniforms.coreTemperature).mul(this.uniforms.dt.mul(1.4)).mul(sourceCore.mul(0.65).add(1)));
       const curlCoord = uvw.mul(3.2).add(vec3(
         this.uniforms.time.mul(0.09),
         this.uniforms.time.mul(-0.12),

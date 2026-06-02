@@ -352,20 +352,29 @@ const VOLUME_RAYMARCH = Fn(
       const sourceWarmup = nodeSmoothstep(0.0, 0.04, age.add(temperature.mul(0.55)));
       density.assign(density.mul(bottomFade).mul(topFade).mul(sourceWarmup));
 
-      const sourceCore = nodeSmoothstep(emissionThreshold, emissionThreshold.add(0.45), temperature)
+      const effectiveEmissionThreshold = emissionThreshold.clamp(0, 1.2);
+      const thermalCore = temperature
+        .add(density.mul(0.32))
+        .add(emissionIntensity.mul(0.06).clamp(0, 0.75))
+        .clamp(0, 2.8);
+      const sourceCore = nodeSmoothstep(
+        effectiveEmissionThreshold,
+        effectiveEmissionThreshold.add(0.35),
+        thermalCore,
+      )
         .mul(nodeSmoothstep(0.22, 0.95, density))
         .mul(nodeSmoothstep(0.02, 0.35, age).oneMinus().mul(0.45).add(0.55))
         .clamp(0, 1);
       const coreEmissionMask = sourceCore
         .mul(nodeSmoothstep(0.001, 0.02, emissionIntensity))
         .clamp(0, 1);
-      const effectiveAbsorption = absorption.mul(mix(float(1), float(0.38), coreEmissionMask));
+      const effectiveAbsorption = absorption.mul(mix(float(1), float(0.78), coreEmissionMask));
       const beer = density.mul(effectiveAbsorption.mul(0.026)).negate().exp().oneMinus();
       const sampleAlpha = beer
         .mul(opacity.mul(1.08))
         .mul(topFade.mul(0.45).add(0.55))
-        .mul(mix(float(1), float(0.62), coreEmissionMask))
-        .clamp(0, 0.72)
+        .mul(mix(float(1), float(1.18), coreEmissionMask))
+        .clamp(0, 0.82)
         .toVar();
       const shadowGate1 = nodeSmoothstep(0.5, 1.5, shadowSamples);
       const shadowGate2 = nodeSmoothstep(2.5, 3.5, shadowSamples);
@@ -409,7 +418,7 @@ const VOLUME_RAYMARCH = Fn(
         .mul(selfShadow.mul(0.82).add(0.18))
         .add(
           emissionColor.rgb
-            .mul(emissionIntensity.mul(0.52))
+            .mul(emissionIntensity.mul(0.42))
             .mul(sourceCore),
         )
         .toVar();
@@ -1165,8 +1174,10 @@ class FluidGrid3D {
         0.78,
         sourceNoise.add(sourceMask.mul(0.18)),
       ).clamp(0, 1);
+      const sourceCore = nodeSmoothstep(0.42, 0.92, sourceMask).clamp(0, 1);
+      const strandFill = sourceStrands.mul(0.72).add(0.28);
       const mask = sourceMask
-        .mul(sourceStrands.mul(0.72).add(0.28))
+        .mul(mix(strandFill, float(1), sourceCore.mul(0.85)))
         .mul(openMask)
         .clamp(0, 1);
       const currentDensity = readDensity.element(instanceIndex);
@@ -1174,11 +1185,19 @@ class FluidGrid3D {
       const densityMask = mask.mul(emitter.densityChannel).clamp(0, 1);
       const temperatureMask = mask.mul(emitter.temperatureChannel).clamp(0, 1);
       const velocityMask = mask.mul(emitter.velocityChannel).clamp(0, 1);
-      const densityDelta = emitter.spawnRate.mul(this.uniforms.dt).mul(densityMask);
+      const densityDelta = emitter.spawnRate
+        .mul(this.uniforms.dt)
+        .mul(densityMask)
+        .mul(sourceCore.mul(0.55).add(1));
       const sourceRefresh = densityMask.clamp(0, 1);
       const nextAge = currentDensity.z.mul(sourceRefresh.oneMinus()).clamp(0, 1);
       const nextTemperature = currentDensity.y
-        .add(emitter.temperature.mul(temperatureMask).mul(this.uniforms.dt.mul(1.4)));
+        .add(
+          emitter.temperature
+            .mul(temperatureMask)
+            .mul(this.uniforms.dt.mul(1.4))
+            .mul(sourceCore.mul(0.65).add(1)),
+        );
       const sourceDetail = sourceNoise.sub(0.26).clamp(0, 1).mul(densityMask);
       const nextDetail = currentDensity.w
         .mul(sourceRefresh.oneMinus().mul(0.86).add(0.08))

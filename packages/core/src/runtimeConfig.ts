@@ -266,7 +266,7 @@ export function createWispySmokeRuntimeConfig(
       detailScale: numberValue(values, "detailScale", 22),
       detailSpeed: numberValue(values, "detailSpeed", 0.45),
       detailStrength: clampedNumberValue(values, "detailStrength", 4.4, 0, 100),
-      emissionThreshold: clampedNumberValue(values, "emissionThreshold", 0.72, 0, 10),
+      emissionThreshold: clampedNumberValue(values, "emissionThreshold", 0.72, 0, 1.2),
       flowWarpStrength: clampedNumberValue(values, "flowWarpStrength", 1.65, 0, 20),
       lightDirection: vec3Value(values, "lightDirection", [0.35, 0.85, 0.25]),
       opacity: numberValue(values, "opacity", 0.86),
@@ -477,7 +477,7 @@ export function compileWispySmokeRuntimeConfig(
         "emissionThreshold",
         base.render.emissionThreshold,
         0,
-        10,
+        1.2,
       ),
       flowWarpStrength: clampedNumberValue(
         renderValues,

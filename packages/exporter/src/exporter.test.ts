@@ -56,6 +56,9 @@ describe("@threefx/exporter", () => {
     expect(exported.mainClassSource).toContain("sourceScale");
     expect(exported.mainClassSource).toContain("sourceFalloff");
     expect(exported.mainClassSource).toContain("emissionThreshold");
+    expect(exported.mainClassSource).toContain("effectiveEmissionThreshold");
+    expect(exported.mainClassSource).toContain("emissionIntensity.mul(0.06)");
+    expect(exported.mainClassSource).toContain("sourceCore.mul(0.55).add(1)");
     expect(exported.mainClassSource).toContain("emissionColor");
     expect(exported.mainClassSource).toContain("selfShadow");
     expect(exported.mainClassSource).toContain("valueNoise3D");

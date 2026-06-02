@@ -382,12 +382,14 @@ describe("@threefx/core", () => {
   it("preserves extended scalar controls in runtime config", () => {
     const config = createWispySmokeRuntimeConfig({
       detailStrength: 88,
+      emissionThreshold: 5.56,
       flowWarpStrength: 18,
       pressureIterations: 72,
       velocityDissipation: 64,
     });
 
     expect(config.render.detailStrength).toBe(88);
+    expect(config.render.emissionThreshold).toBe(1.2);
     expect(config.render.flowWarpStrength).toBe(18);
     expect(config.solver.pressureIterations).toBe(72);
     expect(config.solver.velocityDissipation).toBe(64);

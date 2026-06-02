@@ -525,9 +525,9 @@ export const WISPY_SMOKE_PARAMETER_METADATA: readonly ParameterMetadata[] = [
     defaultValue: 0.72,
     group: "Render",
     min: 0,
-    max: 10,
+    max: 1.2,
     step: 0.01,
-    description: "Temperature threshold above which optional volume emission contributes.",
+    description: "Temperature threshold above which optional volume emission contributes; higher values isolate the hottest source core.",
   },
   {
     id: "bloomEnabled",

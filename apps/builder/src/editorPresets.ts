@@ -1,5 +1,5 @@
 import {
-  createWispySmokeGraph,
+  createLayeredWispySmokeCompositeGraph,
   validateGraphDocument,
   type GraphDocument,
 } from "@threefx/core";
@@ -17,16 +17,16 @@ export const EDITOR_PRESETS: readonly EditorPreset[] = [
   {
     id: "wispy-smoke",
     name: "Wispy Smoke",
-    summary: "Neutral billowing plume",
-    description: "Default production graph tuned for dense gray smoke, rolling structure, and export.",
+    summary: "Procedural volume effect",
+    description: "A ready-to-edit smoke graph with simulation, rendering, compositing, preview, and export.",
   },
 ];
 
 export function createEditorPresetGraph(presetId: EditorPresetId): GraphDocument {
-  if (presetId !== "wispy-smoke") {
-    throw new Error(`Unknown editor preset '${presetId}'.`);
+  if (presetId === "wispy-smoke") {
+    return createLayeredWispySmokeCompositeGraph();
   }
-  return createWispySmokeGraph();
+  throw new Error(`Unknown editor preset '${presetId}'.`);
 }
 
 export function getEditorPreset(presetId: EditorPresetId): EditorPreset {

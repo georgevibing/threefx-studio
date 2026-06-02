@@ -54,7 +54,7 @@ Editable input ports declare value metadata directly on the `PortDefinition`, in
 | `simulation` | Simulation outputs consumed by render nodes                              | `simulation`            |
 | `volume`     | Volume resources or volume data                                          | `volume`                |
 | `transform`  | Object transform data                                                    | `transform`             |
-| `render`     | Render-stage output consumed by final output nodes                       | `render`                |
+| `render`     | Render-stage output consumed by composite or final output nodes          | `render`                |
 | `effect`     | Complete effect output, reserved for future multi-effect composition     | `effect`                |
 | `any`        | Escape hatch for intentionally generic nodes                             | Any type                |
 

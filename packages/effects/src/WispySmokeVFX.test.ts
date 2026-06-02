@@ -55,11 +55,10 @@ describe("WispySmokeVFX", () => {
     expect(params.color).toBe("#b8bcc0");
     expect(params.emissionColor).toBe("#b8bcc0");
     expect(params.emissionIntensity).toBe(0);
+    expect(params.emissionThreshold).toBe(0.72);
+    expect(params.coreTemperature).toBe(1.1);
     expect(params.blendMode).toBe("normal");
-    expect(params.sourceGlowEnabled).toBe(false);
-    expect(params.sourceGlowColor).toBe("#ffaa66");
-    expect(params.sourceGlowIntensity).toBe(0);
-    expect(params.sourceGlowRadius).toBe(1.15);
+    expect(params.renderOrder).toBe(10);
     expect(params.pressureIterations).toBe(16);
     expect(params.diffusionIterations).toBe(0);
     expect(params.advectionMode).toBe("maccormack");
@@ -69,7 +68,16 @@ describe("WispySmokeVFX", () => {
     expect(params.scattering).toBeGreaterThan(0);
     expect(params.detailScale).toBeGreaterThan(0);
     expect(params.detailOctaves).toBeGreaterThanOrEqual(1);
-    expect(params.flowWarpStrength).toBe(1.05);
+    expect(params.riseSpeed).toBe(1.2);
+    expect(params.buoyantLift).toBe(1.4);
+    expect(params.sourceVelocity).toEqual([0, 0.34, 0]);
+    expect(params.curlStrength).toBe(9);
+    expect(params.vorticityConfinement).toBe(16);
+    expect(params.densityDissipation).toBe(0.06);
+    expect(params.velocityDissipation).toBe(0.015);
+    expect(params.flowWarpStrength).toBe(1.65);
+    expect(params.bloomEnabled).toBe(false);
+    expect(params.toneMapping).toBe("renderer");
     expect(params.lightDirection).toEqual([0.35, 0.85, 0.25]);
     expect(params.phaseAnisotropy).toBe(0.32);
     expect(params.opacityRamp.length).toBeGreaterThan(2);
@@ -97,6 +105,9 @@ describe("WispySmokeVFX", () => {
     expect(stats.solverPasses).toBe(27);
     expect(stats.simulationMs).toBeGreaterThanOrEqual(0);
     expect(stats.renderSteps).toBeGreaterThanOrEqual(16);
+    expect(stats.compositeLayerCount).toBeGreaterThanOrEqual(1);
+    expect(stats.bloomActive).toBe(false);
+    expect(stats.toneMapping).toBe("renderer");
     expect(stats.advectionMode).toBe("maccormack");
     expect(stats.diffusionIterations).toBe(0);
     expect(stats.emitterCount).toBe(1);
@@ -128,6 +139,7 @@ describe("WispySmokeVFX", () => {
     });
     expect(material?.outputNode).toBeTruthy();
     expect(smoke.object3D.children.some((child) => child.type === "Sprite")).toBe(false);
+    expect(smoke.object3D.children.some((child) => child.name.includes("SourceGlow"))).toBe(false);
 
     smoke.dispose();
   });
@@ -177,21 +189,18 @@ describe("WispySmokeVFX", () => {
       absorption: 1.8,
       detailScale: 5.5,
       diffusion: 0.03,
+      coreTemperature: 1.5,
       emissionColor: "#ff4a1c",
       emissionIntensity: 1.6,
-      sourceGlowColor: "#ff8800",
-      sourceGlowEnabled: true,
-      sourceGlowIntensity: 4.2,
       pressureIterations: 24,
       scattering: 0.82,
-      sourceTemperature: 1.5,
     });
     smoke.update(1 / 60, 2);
 
     expect(smoke.getStats().pressureIterations).toBe(24);
     expect(smoke.getStats().solverPasses).toBe(35);
     expect(smoke.getParams().emissionColor).toBe("#ff4a1c");
-    expect(smoke.getParams().sourceGlowColor).toBe("#ff8800");
+    expect(smoke.getParams().coreTemperature).toBe(1.5);
     expect(smoke.getStats().fallbackActive).toBe(false);
     expect(smoke.getParams().detailScale).toBe(5.5);
     smoke.dispose();

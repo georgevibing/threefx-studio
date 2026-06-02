@@ -26,9 +26,11 @@ Open the Vite URL printed by pnpm. The builder app lives in `apps/builder`.
 
 ## Edit Wispy Smoke
 
-The default graph is the Wispy Smoke preset. It is built from generic fluid nodes: sphere or box emitters, curl/fBm fields, buoyancy/wind/vortex forces, optional sphere or box obstacles, a 3D fluid solver, a volume renderer, source glow, and debug view. Use the node palette or right-click the canvas to add nodes. Drag between compatible ports to connect nodes. Drag from a port into empty canvas space to open a filtered node menu. Use the Auto layout toolbar button to rearrange nodes into ranked, non-overlapping lanes. Node configuration lives in grouped parameter panels on each node. When the canvas is focused, `Ctrl` + `F` or `Cmd` + `F` opens canvas find for fuzzy node and parameter search; matching nodes are highlighted, matching groups expand, Enter and the arrow buttons jump between results, the `X` clears the term, and `Esc` dismisses the search box. Unlinked value inputs can be edited inline; linked value inputs show the upstream source button instead. Reusable primitive parameter nodes such as `parameter.float`, `parameter.color`, and `parameter.quality` carry custom labels and values when you want a value to drive one or more inputs. The right rail is reserved for preview, graph diagnostics, and export.
+The default graph is the Wispy Smoke template. It is built from generic fluid nodes: sphere or box emitters, smoke-only and heat-only sources, curl/fBm fields, buoyancy/wind/vortex forces, optional sphere or box obstacles, a 3D fluid solver, a volume renderer, composite output, and debug view. The template uses multiple sources writing into one shared solver, so heat and smoke share the same velocity field. Use the node palette or right-click the canvas to add nodes. Drag between compatible ports to connect nodes. Drag from a port into empty canvas space to open a filtered node menu. New projects and the Auto layout toolbar button arrange nodes into ranked, non-overlapping lanes. Node configuration lives in grouped parameter panels on each node. `Ctrl` + `F` or `Cmd` + `F` is intercepted globally and opens canvas find for fuzzy node and parameter search; matching nodes are highlighted, matching groups expand, Enter and the arrow buttons jump between results, the `X` clears the term, and `Esc` dismisses the search box. Unlinked value inputs can be edited inline; linked value inputs show the upstream source button instead. Reusable primitive parameter nodes such as `parameter.float`, `parameter.color`, and `parameter.quality` carry custom labels and values when you want a value to drive one or more inputs. The right rail is reserved for preview, graph diagnostics, and export.
 
 Parameter changes update the preview live from the current graph state. While hovering the preview, middle-drag orbits, `Shift` + middle-drag pans, and the scroll wheel zooms within clamped limits. On macOS, `Option` + left-drag orbits, `Option` + `Cmd` + left-drag pans, and `Option` + `Control` + left-drag zooms. Use the preview maximize button for a larger modal view; `Esc` restores it. The editor starts from the configured startup preset by default, the New Project button opens the Wispy Smoke template for a clean graph reset, toolbar save/load uses browser local storage explicitly, and graph JSON can also be imported or downloaded. Flip `STARTUP_GRAPH_CONFIG.source` in `apps/builder/src/App.tsx` to hydrate from the saved local graph during development.
+
+When the builder is running on localhost, DevTools exposes `window.copyGraph()`. Calling `copyGraph()` copies the current in-memory graph JSON to the clipboard and returns the same string. Use `copyGraph({ compact: true })` for one-line JSON.
 
 ## Port Types
 
@@ -59,40 +61,46 @@ const smoke = new WispySmokeVFX({
   spawnRate: 1350,
   lifetime: 8.2,
   radius: 0.38,
+  sourcePosition: [0, 0.22, 0],
+  sourceScale: [0.92, 0.42, 0.92],
+  sourceFalloff: 0.9,
   height: 7.4,
   density: 0.9,
   baseDensity: 1.85,
   opacity: 0.86,
-  riseSpeed: 1.85,
-  buoyantLift: 2.8,
+  riseSpeed: 1.2,
+  buoyantLift: 1.4,
   turbulence: 5,
-  curlStrength: 7.2,
-  vorticityConfinement: 12.5,
+  curlStrength: 9,
+  vorticityConfinement: 16,
   wind: [0, 0, 0],
-  sourceVelocity: [0, 0.72, 0],
+  sourceVelocity: [0, 0.34, 0],
   vortexStrength: 0,
   pressureIterations: 16,
   diffusion: 0,
   diffusionIterations: 0,
   advectionMode: "maccormack",
-  sourceTemperature: 1.1,
+  coreTemperature: 1.1,
   plumeTaper: 0.12,
   emissionColor: "#b8bcc0",
   emissionIntensity: 0,
+  emissionThreshold: 0.72,
   absorption: 10.8,
   scattering: 2.15,
-  detailScale: 18,
-  detailStrength: 3.8,
+  detailScale: 22,
+  detailStrength: 4.4,
   detailSpeed: 0.45,
   detailOctaves: 4,
-  flowWarpStrength: 1.05,
+  flowWarpStrength: 1.65,
   lightDirection: [0.35, 0.85, 0.25],
   phaseAnisotropy: 0.32,
-  sourceGlowEnabled: false,
-  sourceGlowColor: "#ffaa66",
-  sourceGlowIntensity: 0,
-  sourceGlowRadius: 1.15,
   blendMode: "normal",
+  renderOrder: 10,
+  bloomEnabled: false,
+  bloomThreshold: 1,
+  bloomStrength: 0.35,
+  bloomRadius: 0.18,
+  toneMapping: "renderer",
   renderStepScale: 1.1,
   shadowQuality: 8,
   shadowStrength: 1.65,
@@ -107,7 +115,7 @@ function frame(deltaSeconds: number, elapsedSeconds: number) {
 }
 ```
 
-The exported class depends on `three` and, for the quality path, Three's `three/webgpu`, `three/tsl`, and raymarching example helper modules. Pass a `THREE.WebGPURenderer` with `backendMode: "auto"` or `"webgpu"` to run the Eulerian solver; the effect logs a one-time warning if it falls back to the compatibility particle path. The builder preview uses AgX tone mapping. It does not depend on React, the builder app, or ThreeFX workspace packages.
+The exported class depends on `three` and, for the quality path, Three's `three/webgpu`, `three/tsl`, and raymarching example helper modules. Pass a `THREE.WebGPURenderer` with `backendMode: "auto"` or `"webgpu"` to run the Eulerian solver; the effect logs a one-time warning if it falls back to the compatibility particle path. The builder preview uses AgX tone mapping. Composite tone mapping stays at `"renderer"` by default so host renderer settings remain authoritative; use the exported `render(renderer, scene, camera)` helper only when an effect should temporarily override tone mapping. It does not depend on React, the builder app, or ThreeFX workspace packages.
 
 ## Package Structure
 
@@ -132,7 +140,9 @@ pnpm format
 
 ## Current Limitations
 
-- The high-quality smoke backend requires a WebGPU renderer. It runs a cubic Eulerian grid (`32^3` through `96^3`) with TSL compute passes for source injection, semi-Lagrangian or MacCormack advection, optional diffusion, gradient-driven buoyancy/wind, curl and vorticity confinement, obstacle masking, divergence, Jacobi pressure solve, projection, and render-volume packing. Rendering raymarches simulated density/temperature with absorption, phase-biased scattering, flow-warped procedural detail, multi-tap self-shadow sampling, soft top/bottom fades, and debug views. The compatibility backend is intentionally lower fidelity.
+- The high-quality smoke backend requires a WebGPU renderer. It runs a cubic Eulerian grid (`32^3` through `96^3`) with TSL compute passes for channel-aware volumetric source injection, semi-Lagrangian or MacCormack advection, optional diffusion, gradient-driven buoyancy/wind, curl and vorticity confinement, obstacle masking, divergence, open-top Jacobi pressure solve, projection, and render-volume packing. Rendering raymarches simulated density/temperature/age in one pass with absorption, phase-biased scattering, flow-advected detail, gradient/age-driven sheet erosion, multi-tap self-shadow sampling, optional temperature-threshold core emission, soft top/bottom fades, and debug views. The compatibility backend is intentionally lower fidelity.
+- The runtime currently allocates compute nodes for up to four emitters and four obstacles per effect instance. The graph/compiler can represent more, but only the first four runtime entries are active until dynamic compute allocation grows.
+- Composite output supports deterministic ordered over/additive layers. Full order-independent transparency between independent volumes is out of scope for now.
 - The graph compiler currently targets the Wispy Smoke vertical slice only.
 - Exported code is TypeScript source, not an npm package artifact yet.
 - Visual regression and deeper GPU performance benchmarks are planned but not implemented.

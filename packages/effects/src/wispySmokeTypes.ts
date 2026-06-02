@@ -8,6 +8,7 @@ import type {
   WispySmokeDebugView,
   WispySmokeGridResolution,
   WispySmokeRuntimeConfig,
+  WispySmokeToneMapping,
 } from "@threefx/core";
 
 export interface WispySmokeVFXParams {
@@ -43,12 +44,13 @@ export interface WispySmokeVFXParams {
   readonly diffusion: number;
   readonly diffusionIterations: number;
   readonly advectionMode: WispySmokeAdvectionMode;
-  readonly sourceTemperature: number;
+  readonly coreTemperature: number;
   readonly plumeTaper: number;
   readonly softness: number;
   readonly color: string;
   readonly emissionColor: string;
   readonly emissionIntensity: number;
+  readonly emissionThreshold: number;
   readonly absorption: number;
   readonly scattering: number;
   readonly detailScale: number;
@@ -60,11 +62,12 @@ export interface WispySmokeVFXParams {
   readonly phaseAnisotropy: number;
   readonly shadowStrength: number;
   readonly blendMode: WispySmokeBlendMode;
-  readonly sourceGlowEnabled: boolean;
-  readonly sourceGlowColor: string;
-  readonly sourceGlowIntensity: number;
-  readonly sourceGlowRadius: number;
-  readonly sourceGlowSoftness: number;
+  readonly renderOrder: number;
+  readonly bloomEnabled: boolean;
+  readonly bloomThreshold: number;
+  readonly bloomStrength: number;
+  readonly bloomRadius: number;
+  readonly toneMapping: WispySmokeToneMapping;
   readonly seed: number;
   readonly quality: QualityPreset;
   readonly backendMode: WispySmokeBackendMode;
@@ -83,6 +86,8 @@ export interface WispySmokeVFXStats {
   readonly activeDebugView: WispySmokeDebugView;
   readonly advectionMode: WispySmokeAdvectionMode;
   readonly backend: "webgpu" | "compat";
+  readonly bloomActive: boolean;
+  readonly compositeLayerCount: number;
   readonly diffusionIterations: number;
   readonly emitterCount: number;
   readonly fallbackActive: boolean;
@@ -96,6 +101,7 @@ export interface WispySmokeVFXStats {
   readonly renderSteps: number;
   readonly simulationMs: number;
   readonly solverPasses: number;
+  readonly toneMapping: WispySmokeToneMapping;
 }
 
 export type WispySmokeVFXOptions = Partial<WispySmokeVFXParams> & {

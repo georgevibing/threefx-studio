@@ -3,6 +3,7 @@ import {
   canAssignPortType,
   compileGraphToIR,
   createDefaultWispySmokeParams,
+  createLayeredWispySmokeCompositeGraph,
   createNodeRegistry,
   createWispySmokeGraph,
   createWispySmokeRuntimeConfig,
@@ -126,7 +127,14 @@ describe("@threefx/core", () => {
         "lightDirection",
         "phaseAnisotropy",
         "shadowStrength",
+        "emissionThreshold",
+        "renderOrder",
       ]),
+    );
+    expect(registry.get("emitter.smoke")?.ports.some((port) => port.id === "emitter")).toBe(true);
+    expect(registry.get("emitter.heat")?.ports.some((port) => port.id === "coreTemperature")).toBe(true);
+    expect(registry.get("render.composite")?.ports.map((port) => port.id)).toEqual(
+      expect.arrayContaining(["layers", "bloomEnabled", "bloomStrength", "toneMapping", "render"]),
     );
   });
 
@@ -267,6 +275,47 @@ describe("@threefx/core", () => {
     expect(first?.obstacles.map((entry) => entry.id)).toEqual(["sphere_obstacle"]);
   });
 
+  it("compiles channel-aware emitters and composite settings", () => {
+    const result = compileGraphToIR(createLayeredWispySmokeCompositeGraph());
+    expect(result.ir).toBeTruthy();
+
+    const config = result.ir?.runtimeConfig;
+    expect(config?.emitters.map((entry) => [entry.id, entry.kind, entry.channels])).toEqual([
+      ["heat_source", "heat", ["temperature"]],
+      ["smoke_source", "smoke", ["density", "velocity"]],
+    ]);
+    expect(config?.composite.bloom.enabled).toBe(true);
+    expect(config?.composite.layers.map((layer) => layer.sourceNodeId)).toEqual(["volume_render"]);
+    expect(config?.composite.toneMapping).toBe("renderer");
+    expect(config?.emitters.find((entry) => entry.id === "smoke_source")).toMatchObject({
+      density: 0.3,
+      radius: 0.5,
+      spawnRate: 1350,
+    });
+    expect(config?.forces.find((entry) => entry.id === "buoyancy")).toMatchObject({
+      buoyantLift: 0.65,
+      riseSpeed: 0.75,
+    });
+    expect(config?.fields.find((entry) => entry.id === "curl_field")).toMatchObject({
+      curlStrength: 35,
+      strength: 7,
+      vorticityConfinement: 15.69,
+    });
+    expect(config?.solver).toMatchObject({
+      densityDissipation: 1,
+      pressureIterations: 4,
+      velocityDissipation: 0.35,
+    });
+    expect(config?.render).toMatchObject({
+      emissionThreshold: 0.72,
+      opacity: 0.85,
+    });
+    expect(result.ir?.parameterValues).toMatchObject({
+      height: 10,
+      size: 15,
+    });
+  });
+
   it("exposes typed parameter metadata", () => {
     expect(WISPY_SMOKE_PARAMETER_METADATA.map((parameter) => parameter.id)).toEqual(
       expect.arrayContaining([
@@ -276,9 +325,10 @@ describe("@threefx/core", () => {
         "color",
         "pressureIterations",
         "diffusion",
-        "sourceTemperature",
+        "coreTemperature",
         "emissionColor",
         "emissionIntensity",
+        "emissionThreshold",
         "absorption",
         "scattering",
         "detailScale",
@@ -286,9 +336,10 @@ describe("@threefx/core", () => {
         "detailSpeed",
         "detailOctaves",
         "flowWarpStrength",
+        "bloomEnabled",
+        "toneMapping",
         "lightDirection",
         "phaseAnisotropy",
-        "sourceGlowColor",
         "debugView",
         "quality",
         "backendMode",
@@ -313,12 +364,14 @@ describe("@threefx/core", () => {
     expect(config.render.detailOctaves).toBe(defaults.detailOctaves);
     expect(config.render.detailSpeed).toBe(defaults.detailSpeed);
     expect(config.render.flowWarpStrength).toBe(defaults.flowWarpStrength);
+    expect(config.render.emissionThreshold).toBe(defaults.emissionThreshold);
     expect(config.render.lightDirection).toEqual(defaults.lightDirection);
     expect(config.render.phaseAnisotropy).toBe(defaults.phaseAnisotropy);
     expect(config.render.smokeColor).toBe(defaults.color);
-    expect(config.sourceGlow.enabled).toBe(defaults.sourceGlowEnabled);
-    expect(config.sourceGlow.color).toBe(defaults.sourceGlowColor);
-    expect(config.sourceGlow.intensity).toBe(defaults.sourceGlowIntensity);
+    expect(config.composite.bloom.enabled).toBe(defaults.bloomEnabled);
+    expect(config.composite.toneMapping).toBe(defaults.toneMapping);
+    expect(emitter?.channels).toEqual(["density", "temperature", "velocity"]);
+    expect(emitter?.temperature).toBe(defaults.coreTemperature);
     expect(emitter?.falloff).toBe(defaults.sourceFalloff);
     expect(emitter?.noiseScale).toBe(defaults.sourceNoiseScale);
     expect(emitter?.noiseStrength).toBe(defaults.sourceNoiseStrength);

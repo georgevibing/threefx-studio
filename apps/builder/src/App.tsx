@@ -84,6 +84,7 @@ import {
   createLocalStorageEditorPersistence,
   createLocalStorageEditorPreference,
 } from "./editorPersistence";
+import { CheckboxControl } from "./CheckboxControl";
 import {
   createEditorPresetGraph,
   EDITOR_PRESETS,
@@ -203,6 +204,16 @@ type SelectionDragState = {
   readonly start: { readonly x: number; readonly y: number };
 };
 
+type CopyGraphOptions = {
+  readonly compact?: boolean;
+};
+
+declare global {
+  interface Window {
+    copyGraph?: (options?: CopyGraphOptions) => string;
+  }
+}
+
 type StartupGraphSource = "preset" | "saved-graph";
 
 const LOCAL_STORAGE_KEY = "threefx-studio:wispy-smoke-graph:v1";
@@ -236,6 +247,8 @@ const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
   activeDebugView: "final",
   advectionMode: "trilinear",
   backend: "compat",
+  bloomActive: false,
+  compositeLayerCount: 0,
   diffusionIterations: 0,
   emitterCount: 0,
   fallbackActive: true,
@@ -251,6 +264,7 @@ const EMPTY_PREVIEW_STATS: PreviewPerformanceStats = {
   requestedBackend: "auto",
   simulationMs: 0,
   solverPasses: 0,
+  toneMapping: "renderer",
 };
 const HISTORY_LIMIT = 100;
 const QUICK_ADD_WIDTH = 280;
@@ -303,7 +317,18 @@ function normalizedSearchResultIndex(index: number, count: number): number {
 }
 
 function loadInitialGraph(): GraphDocument {
-  return createEditorPresetGraph(STARTUP_GRAPH_CONFIG.presetId);
+  return createAutoLaidOutPresetGraph(STARTUP_GRAPH_CONFIG.presetId);
+}
+
+function createAutoLaidOutPresetGraph(presetId: EditorPresetId): GraphDocument {
+  return autoLayoutGraphDocument(
+    createEditorPresetGraph(presetId),
+    new Map<string, AutoLayoutNodeSize>(),
+  );
+}
+
+function isLocalhostHost(hostname: string): boolean {
+  return hostname === "localhost" || hostname === "127.0.0.1" || hostname === "::1";
 }
 
 function shouldHydrateSavedGraphOnStartup(): boolean {
@@ -1174,10 +1199,6 @@ function isCanvasSelectionStartTarget(target: EventTarget | null): boolean {
   return Boolean(target.closest(".react-flow__pane"));
 }
 
-function targetIsInsideElement(target: EventTarget | null, element: Element | null): boolean {
-  return target instanceof Node && Boolean(element?.contains(target));
-}
-
 function selectedNodeIdsInClientRect(
   root: HTMLElement | null,
   selectionRect: ReturnType<typeof clientRectFromPoints>,
@@ -1237,7 +1258,6 @@ function App() {
   const nodePaletteRef = useRef<HTMLElement | null>(null);
   const nodePaletteSearchInputRef = useRef<HTMLInputElement | null>(null);
   const pendingMoveSnapshotRef = useRef<EditorSnapshot | null>(null);
-  const pendingNodePaletteSearchFocusRef = useRef(false);
   const pendingParameterSnapshotRef = useRef<EditorSnapshot | null>(null);
   const selectionBaseNodeIdsRef = useRef<ReadonlySet<string>>(new Set());
   const selectionDragRef = useRef<SelectionDragState | null>(null);
@@ -1276,6 +1296,38 @@ function App() {
     },
     [],
   );
+
+  useEffect(() => {
+    if (!isLocalhostHost(window.location.hostname)) {
+      return undefined;
+    }
+
+    const copyGraph = (options: CopyGraphOptions = {}): string => {
+      const serialized = options.compact
+        ? JSON.stringify(graph)
+        : serializeGraphDocument(graph);
+
+      if (navigator.clipboard) {
+        void navigator.clipboard
+          .writeText(serialized)
+          .then(() => {
+            console.info("[ThreeFX] Copied current graph JSON to clipboard.");
+          })
+          .catch((error) => {
+            console.warn("[ThreeFX] Could not write graph JSON to clipboard.", error);
+          });
+      }
+
+      return serialized;
+    };
+
+    window.copyGraph = copyGraph;
+    return () => {
+      if (window.copyGraph === copyGraph) {
+        delete window.copyGraph;
+      }
+    };
+  }, [graph]);
 
   const createSnapshot = useCallback(
     (sourceGraph: GraphDocument = graph): EditorSnapshot => ({
@@ -1382,33 +1434,6 @@ function App() {
   const toggleNodePalette = useCallback(() => {
     setNodePaletteExpandedPreference(!isNodePaletteExpanded);
   }, [isNodePaletteExpanded, setNodePaletteExpandedPreference]);
-
-  const focusNodePaletteSearch = useCallback(() => {
-    if (!isNodePaletteExpanded) {
-      pendingNodePaletteSearchFocusRef.current = true;
-      setNodePaletteExpandedPreference(true);
-      return;
-    }
-    const input = nodePaletteSearchInputRef.current;
-    if (!input) {
-      pendingNodePaletteSearchFocusRef.current = true;
-      return;
-    }
-    input.focus();
-    input.select();
-  }, [isNodePaletteExpanded, setNodePaletteExpandedPreference]);
-
-  useEffect(() => {
-    if (!isNodePaletteExpanded || !pendingNodePaletteSearchFocusRef.current) {
-      return;
-    }
-    pendingNodePaletteSearchFocusRef.current = false;
-    window.requestAnimationFrame(() => {
-      const input = nodePaletteSearchInputRef.current;
-      input?.focus();
-      input?.select();
-    });
-  }, [isNodePaletteExpanded]);
 
   const focusCanvasSearchInput = useCallback((selectText = false) => {
     window.requestAnimationFrame(() => {
@@ -1863,7 +1888,7 @@ function App() {
   const startFromPreset = useCallback(
     (presetId: EditorPresetId) => {
       const preset = getEditorPreset(presetId);
-      const nextGraph = createEditorPresetGraph(presetId);
+      const nextGraph = createAutoLaidOutPresetGraph(presetId);
       commitGraphChange(() => nextGraph, {
         nextSelectedEdgeIds: [],
         nextSelectedNodeIds: [],
@@ -1874,8 +1899,13 @@ function App() {
       setNodeMenu(null);
       setIsPresetDialogOpen(false);
       void setViewport(viewportForGraph(nextGraph));
+      window.requestAnimationFrame(() => {
+        window.requestAnimationFrame(() => {
+          void fitView({ padding: 0.18, duration: 180 });
+        });
+      });
     },
-    [commitGraphChange, setViewport],
+    [commitGraphChange, fitView, setViewport],
   );
 
   const downloadJson = useCallback(() => {
@@ -2166,11 +2196,6 @@ function App() {
       }
       const key = event.key.toLowerCase();
       const primary = isPrimaryModifierPressed(event, isApple);
-      const target = event.target;
-      const isNodePaletteTarget =
-        target instanceof window.Node && Boolean(nodePaletteRef.current?.contains(target));
-      const isCanvasSearchTarget = targetIsInsideElement(target, canvasSearchPopoverRef.current);
-      const isCanvasTarget = targetIsInsideElement(target, canvasPanelRef.current);
       if (primary && key === "s") {
         consumeShortcutEvent(event);
         saveLocal();
@@ -2181,12 +2206,7 @@ function App() {
         loadLocal();
         return;
       }
-      if (primary && key === "f" && isNodePaletteTarget) {
-        consumeShortcutEvent(event);
-        focusNodePaletteSearch();
-        return;
-      }
-      if (primary && key === "f" && (isCanvasSearchTarget || (isCanvasTarget && !isEditableEventTarget(target)))) {
+      if (primary && key === "f") {
         consumeShortcutEvent(event);
         openCanvasSearch();
         return;
@@ -2262,7 +2282,6 @@ function App() {
       dismissCanvasSearch,
       duplicateSelected,
       focusSelection,
-      focusNodePaletteSearch,
       isApple,
       isEditorHydrating,
       loadLocal,
@@ -2677,7 +2696,6 @@ function App() {
         onClose={() => setIsShortcutDialogOpen(false)}
       />
       <PresetDialog
-        currentGraphName={graph.name}
         open={isPresetDialogOpen}
         presets={EDITOR_PRESETS}
         onClose={() => setIsPresetDialogOpen(false)}
@@ -2742,7 +2760,7 @@ function TopBar({
       </div>
       <div className="topbar-actions" aria-label="Editor actions">
         <div className="topbar-action-group" role="group" aria-label="Project">
-          <IconButton title="New from preset" onClick={onNewProject} icon={<Plus size={16} />} />
+          <IconButton title="New Project" onClick={onNewProject} icon={<Plus size={16} />} />
           <IconButton title="Save" onClick={onSave} icon={<Save size={16} />} />
           <IconButton title="Load" onClick={onLoad} icon={<FolderOpen size={16} />} />
         </div>
@@ -2859,8 +2877,8 @@ function ShortcutDialog({
       keys: ["F"],
     },
     {
-      action: "Find fields",
-      description: "Search canvas nodes and parameters",
+      action: "Canvas search",
+      description: "Open global React Flow search for nodes and parameters",
       keys: [shortcutLabel(isApple, "Mod", "F")],
     },
     {
@@ -3008,13 +3026,11 @@ function ShortcutDialog({
 }
 
 function PresetDialog({
-  currentGraphName,
   open,
   presets,
   onClose,
   onSelectPreset,
 }: {
-  readonly currentGraphName: string;
   readonly open: boolean;
   readonly presets: readonly EditorPreset[];
   readonly onClose: () => void;
@@ -3052,7 +3068,6 @@ function PresetDialog({
         <div className="preset-dialog-header">
           <div>
             <h2 id="preset-dialog-title">New Project</h2>
-            <span>{currentGraphName}</span>
           </div>
           <button
             type="button"
@@ -3650,18 +3665,33 @@ function NodeParameterField({
 }) {
   const binding = entry.binding;
   const sourceNode = binding?.sourceNode ?? null;
+  const isBooleanField = entry.metadata.type === "bool";
   return (
     <div
       className={`node-parameter-field-row ${
         searchMatched ? "node-parameter-field-row-search-match" : ""
-      }`}
+      } ${isBooleanField && !binding?.linked ? "node-parameter-field-row-bool" : ""}`}
       data-linked-state={binding?.linked ? "linked" : "local"}
     >
       <div className="node-parameter-field-title">
         <span>
           <HighlightedText text={entry.metadata.label} query={searchQuery} />
         </span>
-        <TypePill type={entry.metadata.type} />
+        {isBooleanField && !binding?.linked ? (
+          <div className="node-parameter-field-inline-control">
+            <ParameterField
+              hideLabel
+              metadata={entry.metadata}
+              value={entry.value}
+              onChange={(value, options) =>
+                onNodeParameterChange(node.id, entry.port.id, value, options)
+              }
+            />
+            <TypePill type={entry.metadata.type} />
+          </div>
+        ) : (
+          <TypePill type={entry.metadata.type} />
+        )}
       </div>
       {binding?.linked ? (
         <div className="linked-source-line">
@@ -3677,7 +3707,7 @@ function NodeParameterField({
             </strong>
           )}
         </div>
-      ) : (
+      ) : isBooleanField ? null : (
         <ParameterField
           hideLabel
           metadata={entry.metadata}
@@ -4729,14 +4759,14 @@ function ParameterField({
   const label = hideLabel ? null : <ParameterFieldLabel metadata={metadata} />;
   if (metadata.type === "bool") {
     return (
-      <label className="param-field param-field-row">
+      <div className="param-field param-field-checkbox-row">
         {label}
-        <input
-          type="checkbox"
+        <CheckboxControl
+          ariaLabel={metadata.label}
           checked={Boolean(value)}
-          onChange={(event) => onChange(event.target.checked)}
+          onCheckedChange={(checked) => onChange(checked)}
         />
-      </label>
+      </div>
     );
   }
 
@@ -5676,7 +5706,15 @@ function PreviewViewport({
             delta,
           );
         }
-        renderer.render(scene, camera);
+        if (
+          activeEffect &&
+          (runtimeConfigRef.current.composite.bloom.enabled ||
+            runtimeConfigRef.current.composite.toneMapping !== "renderer")
+        ) {
+          activeEffect.render(renderer, scene, camera);
+        } else {
+          renderer.render(scene, camera);
+        }
         if (sampleDelta > 0) {
           statsElapsed += sampleDelta;
           statsFrames += 1;

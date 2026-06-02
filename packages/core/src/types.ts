@@ -42,6 +42,7 @@ export type WispySmokeBackendMode = "auto" | "webgpu" | "compat";
 export type WispySmokeGridResolution = "low" | "medium" | "high" | "cinematic";
 export type WispySmokeAdvectionMode = "nearest" | "trilinear" | "maccormack";
 export type WispySmokeBlendMode = "normal" | "additive";
+export type WispySmokeToneMapping = "renderer" | "none" | "aces" | "agx";
 export type WispySmokeDebugView =
   | "final"
   | "density"
@@ -52,12 +53,16 @@ export type WispySmokeDebugView =
   | "obstacles"
   | "bounds";
 export type WispySmokeEmitterShape = "sphere" | "box";
+export type WispySmokeEmitterKind = "combined" | "smoke" | "heat";
+export type WispySmokeEmitterChannel = "density" | "temperature" | "velocity";
 export type WispySmokeFieldType = "curl" | "fbm";
 export type WispySmokeForceType = "buoyancy" | "wind" | "vortex";
 export type WispySmokeObstacleShape = "sphere" | "box";
 
 export interface WispySmokeEmitterConfig {
   readonly id: string;
+  readonly channels: readonly WispySmokeEmitterChannel[];
+  readonly kind: WispySmokeEmitterKind;
   readonly shape: WispySmokeEmitterShape;
   readonly density: number;
   readonly falloff: number;
@@ -70,6 +75,24 @@ export interface WispySmokeEmitterConfig {
   readonly spawnRate: number;
   readonly temperature: number;
   readonly velocity: Vec3;
+}
+
+export interface WispySmokeCompositeLayerConfig {
+  readonly blendMode: WispySmokeBlendMode;
+  readonly id: string;
+  readonly order: number;
+  readonly sourceNodeId: string;
+}
+
+export interface WispySmokeCompositeConfig {
+  readonly bloom: {
+    readonly enabled: boolean;
+    readonly radius: number;
+    readonly strength: number;
+    readonly threshold: number;
+  };
+  readonly layers: readonly WispySmokeCompositeLayerConfig[];
+  readonly toneMapping: WispySmokeToneMapping;
 }
 
 export interface WispySmokeForceConfig {
@@ -124,6 +147,7 @@ export interface WispySmokeRenderConfig {
   readonly detailScale: number;
   readonly detailSpeed: number;
   readonly detailStrength: number;
+  readonly emissionThreshold: number;
   readonly flowWarpStrength: number;
   readonly lightDirection: Vec3;
   readonly opacity: number;
@@ -138,20 +162,12 @@ export interface WispySmokeRenderConfig {
   readonly softness: number;
 }
 
-export interface WispySmokeSourceGlowConfig {
-  readonly blendMode: WispySmokeBlendMode;
-  readonly color: ColorValue;
-  readonly enabled: boolean;
-  readonly intensity: number;
-  readonly radius: number;
-  readonly softness: number;
-}
-
 export interface WispySmokeDebugConfig {
   readonly view: WispySmokeDebugView;
 }
 
 export interface WispySmokeRuntimeConfig {
+  readonly composite: WispySmokeCompositeConfig;
   readonly debug: WispySmokeDebugConfig;
   readonly emitters: readonly WispySmokeEmitterConfig[];
   readonly fields: readonly WispySmokeFieldConfig[];
@@ -159,7 +175,6 @@ export interface WispySmokeRuntimeConfig {
   readonly obstacles: readonly WispySmokeObstacleConfig[];
   readonly render: WispySmokeRenderConfig;
   readonly solver: WispySmokeSolverConfig;
-  readonly sourceGlow: WispySmokeSourceGlowConfig;
   readonly transform: {
     readonly worldPosition: Vec3;
   };

@@ -3,13 +3,14 @@ import { describe, expect, it } from "vitest";
 import { createEditorPresetGraph, EDITOR_PRESETS } from "./editorPresets";
 
 describe("editor presets", () => {
-  it("only exposes the raw Wispy Smoke template", () => {
+  it("exposes the Wispy Smoke project template", () => {
     expect(EDITOR_PRESETS).toEqual([
       {
         id: "wispy-smoke",
         name: "Wispy Smoke",
-        summary: "Neutral billowing plume",
-        description: "Default production graph tuned for dense gray smoke, rolling structure, and export.",
+        summary: "Procedural volume effect",
+        description:
+          "A ready-to-edit smoke graph with simulation, rendering, compositing, preview, and export.",
       },
     ]);
   });
@@ -23,6 +24,7 @@ describe("editor presets", () => {
       const validation = validateGraphDocument(graph);
 
       expect(graph.name).not.toHaveLength(0);
+      expect(graph.nodes.some((node) => node.type === "render.composite")).toBe(true);
       expect(validation.valid).toBe(true);
     }
   });

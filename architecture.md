@@ -53,7 +53,7 @@ Validation checks schema version, graph kind, supported effect type, duplicate i
 
 ## Compiler Pipeline
 
-The compiler validates first. Valid graphs are topologically ordered, normalized, and hashed with stable JSON. Wispy Smoke parameters are resolved deterministically in this order: built-in defaults, `graph.parameters` fallback, node-local inline values, then linked primitive parameter source values. The output is `EffectIR`, containing parameter metadata, resolved parameter values, ordered nodes, deterministic connections, a graph hash, and a canonical `runtimeConfig` with `emitters`, `forces`, `fields`, `obstacles`, `solver`, `render`, `sourceGlow`, `debug`, and transform data.
+The compiler validates first. Valid graphs are topologically ordered, normalized, and hashed with stable JSON. Wispy Smoke parameters are resolved deterministically in this order: built-in defaults, `graph.parameters` fallback, node-local inline values, then linked primitive parameter source values. The output is `EffectIR`, containing parameter metadata, resolved parameter values, ordered nodes, deterministic connections, a graph hash, and a canonical `runtimeConfig` with channel-aware `emitters`, `forces`, `fields`, `obstacles`, `solver`, `render`, `composite`, `debug`, and transform data.
 
 ## Effect IR
 
@@ -74,7 +74,9 @@ interface VFXEffect<TParams> {
 }
 ```
 
-Wispy Smoke currently selects a WebGPU Eulerian fluid-grid backend when a WebGPU renderer is available, and falls back to a conservative Three.js particle preview otherwise with a one-time warning for unintended fallback. The WebGPU path owns a reusable `FluidGrid3D` runtime with TSL compute kernels for obstacle masks, curl-noise source injection, semi-Lagrangian or MacCormack advection with min/max clamping, optional Jacobi diffusion, gradient-driven buoyancy and wind, density-weighted curl/vorticity confinement, divergence, Jacobi pressure solve, projection, dissipation, and render-volume packing. Rendering raymarches the packed simulated density/temperature/age volume with Beer-Lambert absorption, phase-biased scattering, flow-warped procedural detail, multi-tap self-shadow sampling, source emission, soft top/bottom fades, source glow, and debug views. Quality presets map to cubic simulation budgets: `low=32^3`, `medium=48^3`, `high=64^3`, and `cinematic=96^3`.
+Wispy Smoke currently selects a WebGPU Eulerian fluid-grid backend when a WebGPU renderer is available, and falls back to a conservative Three.js particle preview otherwise with a one-time warning for unintended fallback. The WebGPU path owns a reusable `FluidGrid3D` runtime with TSL compute kernels for obstacle masks, channel-gated source injection, semi-Lagrangian or MacCormack advection with min/max clamping, optional Jacobi diffusion, gradient-driven buoyancy and wind, density-weighted curl/vorticity confinement, divergence, open-top Jacobi pressure solve, projection, dissipation, and render-volume packing. Multiple smoke and heat emitters write into the same density/temperature/velocity fields so sources share one velocity field. The emissive core is a volumetric emitter region inside that same grid, not a mesh or second solver. Rendering raymarches the packed simulated density/temperature/age volume with Beer-Lambert absorption, phase-biased scattering, flow-advected procedural detail, gradient/age-driven sheet erosion, multi-tap self-shadow sampling, optional temperature-threshold core emission with reduced source absorption, soft top/bottom fades, and debug views. Quality presets map to cubic simulation budgets: `low=32^3`, `medium=48^3`, `high=64^3`, and `cinematic=96^3`.
+
+Composite output is represented as ordered render layers plus optional bloom and tone-mapping metadata. The default tone mapping mode is `renderer`, preserving the host renderer or builder preview setting. Separate layers use deterministic flat over/additive ordering; full order-independent transparency between multiple independent volumes is a future concern.
 
 ## Three.js WebGPU Boundaries
 
@@ -86,7 +88,7 @@ The exporter accepts Effect IR and emits standalone files. Generated code must n
 
 ## Generated Code
 
-Generated classes include typed params, canonical runtime config defaults, lifecycle methods, `setRuntimeConfig`, and a usage snippet. The Wispy Smoke export owns its local helper types, WebGPU fluid solver, raymarched volume renderer, source glow primitive, debug metadata, and compatibility particle fallback so it can be pasted into another Three.js project without ThreeFX package imports. Comments are limited to useful integration context.
+Generated classes include typed params, canonical runtime config defaults, lifecycle methods, `setRuntimeConfig`, an optional `render(renderer, scene, camera)` helper for composite tone-map overrides, and a usage snippet. The Wispy Smoke export owns its local helper types, WebGPU fluid solver, raymarched volume renderer, volumetric core emission, composite metadata, debug metadata, and compatibility particle fallback so it can be pasted into another Three.js project without ThreeFX package imports. Comments are limited to useful integration context.
 
 ## Testing Strategy
 
@@ -94,7 +96,7 @@ Vitest covers serialization/deserialization, port compatibility, validation diag
 
 ## Performance Strategy
 
-Default quality budgets avoid huge allocations. Runtime effects clamp delta time, reuse GPU buffers/textures and fallback typed arrays, expose quality presets, and report active backend, fallback status, grid cells, solver passes, simulation time, and ray-step budget. The builder preview caps WebGPU raymarch pixel ratio to keep visual iteration responsive. Future GPU work should introspect device limits and scale resources automatically.
+Default quality budgets avoid huge allocations. Runtime effects clamp delta time, reuse GPU buffers/textures and fallback typed arrays, expose quality presets, and report active backend, fallback status, grid cells, solver passes, simulation time, ray-step budget, composite layer count, bloom state, and tone mapping mode. The current `FluidGrid3D` allocation creates compute nodes for the first four emitters and first four obstacles in the canonical runtime config. The builder preview caps WebGPU raymarch pixel ratio to keep visual iteration responsive. Future GPU work should introspect device limits and scale resources automatically.
 
 ## Resource Lifecycle
 

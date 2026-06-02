@@ -12,8 +12,11 @@ import type {
   WispySmokeBackendMode,
   WispySmokeBlendMode,
   WispySmokeDebugView,
+  WispySmokeEmitterChannel,
+  WispySmokeEmitterKind,
   WispySmokeRuntimeConfig,
   WispySmokeGridResolution,
+  WispySmokeToneMapping,
 } from "./types";
 
 const ADVECTION_MODES = ["nearest", "trilinear", "maccormack"] as const;
@@ -30,6 +33,7 @@ const DEBUG_VIEWS = [
   "bounds",
 ] as const;
 const GRID_QUALITIES = ["low", "medium", "high", "cinematic"] as const;
+const TONE_MAPPINGS = ["renderer", "none", "aces", "agx"] as const;
 
 function numberValue(values: ParameterMap, id: string, fallback: number): number {
   const value = values[id];
@@ -77,6 +81,10 @@ function colorValue(values: ParameterMap, id: string, fallback: `#${string}`): `
   return typeof value === "string" && value.startsWith("#") ? (value as `#${string}`) : fallback;
 }
 
+function coreTemperatureValue(values: ParameterMap, fallback: number): number {
+  return numberValue(values, "coreTemperature", fallback);
+}
+
 function vec3Value(values: ParameterMap, id: string, fallback: Vec3): Vec3 {
   const value = values[id];
   if (
@@ -113,6 +121,41 @@ function valueMap(overrides: ParameterMap | undefined): ParameterMap {
   });
 }
 
+function emitterKindForType(type: string): WispySmokeEmitterKind {
+  if (type === "emitter.smoke") {
+    return "smoke";
+  }
+  if (type === "emitter.heat") {
+    return "heat";
+  }
+  return "combined";
+}
+
+function emitterChannelsForKind(kind: WispySmokeEmitterKind): readonly WispySmokeEmitterChannel[] {
+  if (kind === "smoke") {
+    return ["density", "velocity"];
+  }
+  if (kind === "heat") {
+    return ["temperature"];
+  }
+  return ["density", "temperature", "velocity"];
+}
+
+function incomingSourceIds(
+  graph: GraphDocument,
+  targetNodeId: string | undefined,
+  targetPort: string,
+): ReadonlySet<string> {
+  if (!targetNodeId) {
+    return new Set();
+  }
+  return new Set(
+    graph.edges
+      .filter((edge) => edge.target === targetNodeId && edge.targetPort === targetPort)
+      .map((edge) => edge.source),
+  );
+}
+
 export function createWispySmokeRuntimeConfig(
   overrides: ParameterMap | undefined = undefined,
 ): WispySmokeRuntimeConfig {
@@ -133,22 +176,41 @@ export function createWispySmokeRuntimeConfig(
   ) as WispySmokeAdvectionMode;
   const blendMode = stringOption(values, "blendMode", "normal", BLEND_MODES) as WispySmokeBlendMode;
   const debugView = stringOption(values, "debugView", "final", DEBUG_VIEWS) as WispySmokeDebugView;
+  const toneMapping = stringOption(values, "toneMapping", "renderer", TONE_MAPPINGS) as WispySmokeToneMapping;
   const opacityRamp = curveValue(
     values,
     "opacityRamp",
     createDefaultWispySmokeParams().opacityRamp as CurveValue,
   );
-  const sourceGlowIntensity = numberValue(values, "sourceGlowIntensity", 0);
 
   return {
+    composite: {
+      bloom: {
+        enabled: values.bloomEnabled === true,
+        radius: clampedNumberValue(values, "bloomRadius", 0.18, 0, 1),
+        strength: clampedNumberValue(values, "bloomStrength", 0.35, 0, 10),
+        threshold: clampedNumberValue(values, "bloomThreshold", 1, 0, 10),
+      },
+      layers: [
+        {
+          blendMode,
+          id: "volume_render",
+          order: intValue(values, "renderOrder", 10),
+          sourceNodeId: "volume_render",
+        },
+      ],
+      toneMapping,
+    },
     debug: {
       view: debugView,
     },
     emitters: [
       {
+        channels: ["density", "temperature", "velocity"],
         density: numberValue(values, "density", 0.9),
         falloff: numberValue(values, "sourceFalloff", 0.9),
         id: "emitter",
+        kind: "combined",
         lifetime: numberValue(values, "lifetime", 8.2),
         noiseScale: numberValue(values, "sourceNoiseScale", 5.2),
         noiseStrength: numberValue(values, "sourceNoiseStrength", 1.65),
@@ -157,39 +219,39 @@ export function createWispySmokeRuntimeConfig(
         scale: vec3Value(values, "sourceScale", [0.92, 0.42, 0.92]),
         shape: "sphere",
         spawnRate: numberValue(values, "spawnRate", 1350),
-        temperature: numberValue(values, "sourceTemperature", 1.1),
-        velocity: vec3Value(values, "sourceVelocity", [0, 0.72, 0]),
+        temperature: coreTemperatureValue(values, 1.1),
+        velocity: vec3Value(values, "sourceVelocity", [0, 0.34, 0]),
       },
     ],
     fields: [
       {
         bands: intValue(values, "turbulenceBands", 4),
-        curlStrength: numberValue(values, "curlStrength", 7.2),
+        curlStrength: numberValue(values, "curlStrength", 9),
         id: "curl_field",
-        scale: numberValue(values, "detailScale", 18),
+        scale: numberValue(values, "detailScale", 22),
         speed: numberValue(values, "detailSpeed", 0.45),
         strength: numberValue(values, "turbulence", 5),
         type: "curl",
-        vorticityConfinement: numberValue(values, "vorticityConfinement", 12.5),
+        vorticityConfinement: numberValue(values, "vorticityConfinement", 16),
       },
     ],
     forces: [
       {
-        buoyantLift: numberValue(values, "buoyantLift", 2.8),
+        buoyantLift: numberValue(values, "buoyantLift", 1.4),
         id: "buoyancy",
         position: [0, 0, 0],
         radius: 1,
-        riseSpeed: numberValue(values, "riseSpeed", 1.85),
+        riseSpeed: numberValue(values, "riseSpeed", 1.2),
         strength: 1,
         type: "buoyancy",
         wind: vec3Value(values, "wind", [0, 0, 0]),
       },
       {
-        buoyantLift: numberValue(values, "buoyantLift", 2.8),
+        buoyantLift: numberValue(values, "buoyantLift", 1.4),
         id: "vortex",
         position: vec3Value(values, "vortexPosition", [0, 0.58, 0]),
         radius: numberValue(values, "vortexRadius", 1.55),
-        riseSpeed: numberValue(values, "riseSpeed", 1.85),
+        riseSpeed: numberValue(values, "riseSpeed", 1.2),
         strength: numberValue(values, "vortexStrength", 0),
         type: "vortex",
         wind: [0, 0, 0],
@@ -201,10 +263,11 @@ export function createWispySmokeRuntimeConfig(
       baseDensity: numberValue(values, "baseDensity", 1.85),
       blendMode,
       detailOctaves: Math.max(1, Math.min(5, intValue(values, "detailOctaves", 4))),
-      detailScale: numberValue(values, "detailScale", 18),
+      detailScale: numberValue(values, "detailScale", 22),
       detailSpeed: numberValue(values, "detailSpeed", 0.45),
-      detailStrength: clampedNumberValue(values, "detailStrength", 3.8, 0, 100),
-      flowWarpStrength: clampedNumberValue(values, "flowWarpStrength", 1.05, 0, 20),
+      detailStrength: clampedNumberValue(values, "detailStrength", 4.4, 0, 100),
+      emissionThreshold: clampedNumberValue(values, "emissionThreshold", 0.72, 0, 10),
+      flowWarpStrength: clampedNumberValue(values, "flowWarpStrength", 1.65, 0, 20),
       lightDirection: vec3Value(values, "lightDirection", [0.35, 0.85, 0.25]),
       opacity: numberValue(values, "opacity", 0.86),
       opacityRamp,
@@ -220,22 +283,14 @@ export function createWispySmokeRuntimeConfig(
     solver: {
       advectionMode,
       backendMode,
-      densityDissipation: numberValue(values, "densityDissipation", 0.012),
+      densityDissipation: numberValue(values, "densityDissipation", 0.06),
       diffusion: numberValue(values, "diffusion", 0),
       diffusionIterations: intValue(values, "diffusionIterations", 0),
       gridResolution,
       pressureIterations: clampedIntValue(values, "pressureIterations", 16, 4, 80),
       quality,
       seed: intValue(values, "seed", 1337),
-      velocityDissipation: numberValue(values, "velocityDissipation", 0.002),
-    },
-    sourceGlow: {
-      blendMode: "additive",
-      color: colorValue(values, "sourceGlowColor", "#ffaa66"),
-      enabled: false,
-      intensity: sourceGlowIntensity,
-      radius: numberValue(values, "sourceGlowRadius", 1.15),
-      softness: numberValue(values, "sourceGlowSoftness", 1.1),
+      velocityDissipation: numberValue(values, "velocityDissipation", 0.015),
     },
     transform: {
       worldPosition: vec3Value(values, "worldPosition", [0, 0, 0]),
@@ -255,14 +310,26 @@ export function compileWispySmokeRuntimeConfig(
   const parameterValues = resolveWispySmokeParameterValues(graph, registry);
   const base = createWispySmokeRuntimeConfig(parameterValues);
   const nodes = [...graph.nodes].sort((left, right) => left.id.localeCompare(right.id));
+  const solverNode = nodes.find((node) => node.type === "simulation.fluid-grid");
+  const connectedEmitterIds = incomingSourceIds(graph, solverNode?.id, "emitter");
   const emitters = nodes
-    .filter((node) => node.type === "emitter.sphere" || node.type === "emitter.box")
+    .filter(
+      (node) =>
+        (node.type === "emitter.sphere" ||
+          node.type === "emitter.box" ||
+          node.type === "emitter.smoke" ||
+          node.type === "emitter.heat") &&
+        connectedEmitterIds.has(node.id),
+    )
     .map((node) => {
       const values = valueMap({ ...parameterValues, ...resolveNodeInputValues(graph, node, registry) });
+      const kind = emitterKindForType(node.type);
       return {
-        density: numberValue(values, "density", 0.9),
+        channels: emitterChannelsForKind(kind),
+        density: kind === "heat" ? 0 : numberValue(values, "density", 0.9),
         falloff: numberValue(values, "sourceFalloff", 0.9),
         id: node.id,
+        kind,
         lifetime: numberValue(values, "lifetime", 8.2),
         noiseScale: numberValue(values, "sourceNoiseScale", 5.2),
         noiseStrength: numberValue(values, "sourceNoiseStrength", 1.65),
@@ -271,8 +338,8 @@ export function compileWispySmokeRuntimeConfig(
         scale: vec3Value(values, "sourceScale", [0.92, 0.42, 0.92]),
         shape: node.type === "emitter.box" ? "box" : "sphere",
         spawnRate: numberValue(values, "spawnRate", 1350),
-        temperature: numberValue(values, "sourceTemperature", 1.1),
-        velocity: vec3Value(values, "sourceVelocity", [0, 0.72, 0]),
+        temperature: kind === "smoke" ? 0 : coreTemperatureValue(values, 1.1),
+        velocity: kind === "heat" ? ([0, 0, 0] as const) : vec3Value(values, "sourceVelocity", [0, 0.34, 0]),
       } as const;
     });
   const fields = nodes
@@ -281,16 +348,16 @@ export function compileWispySmokeRuntimeConfig(
       const values = valueMap({ ...parameterValues, ...resolveNodeInputValues(graph, node, registry) });
       return {
         bands: intValue(values, "turbulenceBands", 4),
-        curlStrength: numberValue(values, "curlStrength", 7.2),
+        curlStrength: numberValue(values, "curlStrength", 9),
         id: node.id,
         scale: node.type === "field.fbm" ? numberValue(values, "detailScale", 18) : numberValue(values, "detailScale", 18),
         speed: numberValue(values, "detailSpeed", 0.45),
         strength:
           node.type === "field.fbm"
-            ? clampedNumberValue(values, "detailStrength", 3.8, 0, 100)
+            ? clampedNumberValue(values, "detailStrength", 4.4, 0, 100)
             : numberValue(values, "turbulence", 5),
         type: node.type === "field.fbm" ? "fbm" : "curl",
-        vorticityConfinement: numberValue(values, "vorticityConfinement", 12.5),
+        vorticityConfinement: numberValue(values, "vorticityConfinement", 16),
       } as const;
     });
   const forces = nodes
@@ -299,11 +366,11 @@ export function compileWispySmokeRuntimeConfig(
       const values = valueMap({ ...parameterValues, ...resolveNodeInputValues(graph, node, registry) });
       const type = node.type === "force.vortex" ? "vortex" : node.type === "force.wind" ? "wind" : "buoyancy";
       return {
-        buoyantLift: numberValue(values, "buoyantLift", 2.8),
+        buoyantLift: numberValue(values, "buoyantLift", 1.4),
         id: node.id,
         position: vec3Value(values, "vortexPosition", [0, 0.58, 0]),
         radius: numberValue(values, "vortexRadius", 1.55),
-        riseSpeed: numberValue(values, "riseSpeed", 1.85),
+        riseSpeed: numberValue(values, "riseSpeed", 1.2),
         strength: type === "vortex" ? numberValue(values, "vortexStrength", 0) : 1,
         type,
         wind: vec3Value(values, "wind", [0, 0, 0]),
@@ -323,23 +390,72 @@ export function compileWispySmokeRuntimeConfig(
       } as const;
     });
 
-  const solverNode = nodes.find((node) => node.type === "simulation.fluid-grid");
   const renderNode = nodes.find((node) => node.type === "render.volume");
-  const glowNode = nodes.find((node) => node.type === "render.source-glow");
+  const compositeNode = nodes.find((node) => node.type === "render.composite");
   const debugNode = nodes.find((node) => node.type === "debug.view");
   const transformNode = nodes.find((node) => node.type === "transform.object");
   const solverValues = valueMap({ ...parameterValues, ...(solverNode ? nodeValues(graph, solverNode.id, registry) : {}) });
   const renderValues = valueMap({ ...parameterValues, ...(renderNode ? nodeValues(graph, renderNode.id, registry) : {}) });
-  const glowValues = valueMap({ ...parameterValues, ...(glowNode ? nodeValues(graph, glowNode.id, registry) : {}) });
+  const compositeValues = valueMap({
+    ...parameterValues,
+    ...(compositeNode ? nodeValues(graph, compositeNode.id, registry) : {}),
+  });
   const debugValues = valueMap({ ...parameterValues, ...(debugNode ? nodeValues(graph, debugNode.id, registry) : {}) });
   const transformValues = valueMap({
     ...parameterValues,
     ...(transformNode ? nodeValues(graph, transformNode.id, registry) : {}),
   });
-  const glowIntensity = numberValue(glowValues, "sourceGlowIntensity", base.sourceGlow.intensity);
+  const layerSourceIds = (
+    compositeNode
+      ? graph.edges.filter((edge) => edge.target === compositeNode.id && edge.targetPort === "layers")
+      : graph.edges.filter((edge) => edge.target === "output" && edge.targetPort === "effect")
+  )
+    .map((edge) => edge.source)
+    .filter((id, index, ids) => ids.indexOf(id) === index)
+    .filter((id) => nodes.some((node) => node.id === id && node.type !== "render.composite"));
+  const compositeLayers = layerSourceIds
+    .map((sourceNodeId) => {
+      const sourceNode = nodes.find((node) => node.id === sourceNodeId);
+      const values = sourceNode ? valueMap({ ...parameterValues, ...nodeValues(graph, sourceNode.id, registry) }) : valueMap(parameterValues);
+      const fallbackOrder = sourceNode?.type === "debug.view" ? 30 : 10;
+      return {
+        blendMode: stringOption(values, "blendMode", base.render.blendMode, BLEND_MODES) as WispySmokeBlendMode,
+        id: sourceNodeId,
+        order: intValue(values, "renderOrder", fallbackOrder),
+        sourceNodeId,
+      };
+    })
+    .sort((left, right) => left.order - right.order || left.id.localeCompare(right.id));
 
   return {
     ...base,
+    composite: {
+      bloom: {
+        enabled: compositeValues.bloomEnabled === true,
+        radius: clampedNumberValue(compositeValues, "bloomRadius", base.composite.bloom.radius, 0, 1),
+        strength: clampedNumberValue(
+          compositeValues,
+          "bloomStrength",
+          base.composite.bloom.strength,
+          0,
+          10,
+        ),
+        threshold: clampedNumberValue(
+          compositeValues,
+          "bloomThreshold",
+          base.composite.bloom.threshold,
+          0,
+          10,
+        ),
+      },
+      layers: compositeLayers.length > 0 ? compositeLayers : base.composite.layers,
+      toneMapping: stringOption(
+        compositeValues,
+        "toneMapping",
+        base.composite.toneMapping,
+        TONE_MAPPINGS,
+      ) as WispySmokeToneMapping,
+    },
     debug: {
       view: stringOption(debugValues, "debugView", base.debug.view, DEBUG_VIEWS) as WispySmokeDebugView,
     },
@@ -356,6 +472,13 @@ export function compileWispySmokeRuntimeConfig(
       detailScale: numberValue(renderValues, "detailScale", base.render.detailScale),
       detailSpeed: numberValue(renderValues, "detailSpeed", base.render.detailSpeed),
       detailStrength: clampedNumberValue(renderValues, "detailStrength", base.render.detailStrength, 0, 100),
+      emissionThreshold: clampedNumberValue(
+        renderValues,
+        "emissionThreshold",
+        base.render.emissionThreshold,
+        0,
+        10,
+      ),
       flowWarpStrength: clampedNumberValue(
         renderValues,
         "flowWarpStrength",
@@ -405,14 +528,6 @@ export function compileWispySmokeRuntimeConfig(
       quality: stringOption(solverValues, "quality", base.solver.quality, GRID_QUALITIES) as QualityPreset,
       seed: intValue(solverValues, "seed", base.solver.seed),
       velocityDissipation: numberValue(solverValues, "velocityDissipation", base.solver.velocityDissipation),
-    },
-    sourceGlow: {
-      blendMode: "additive",
-      color: colorValue(glowValues, "sourceGlowColor", base.sourceGlow.color),
-      enabled: false,
-      intensity: glowIntensity,
-      radius: numberValue(glowValues, "sourceGlowRadius", base.sourceGlow.radius),
-      softness: numberValue(glowValues, "sourceGlowSoftness", base.sourceGlow.softness),
     },
     transform: {
       worldPosition: vec3Value(transformValues, "worldPosition", base.transform.worldPosition),

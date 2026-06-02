@@ -1025,12 +1025,23 @@ button {
   gap: 6px;
 }
 
+.node-parameter-field-row-bool {
+  gap: 0;
+}
+
 .node-parameter-field-title {
   display: flex;
   min-width: 0;
   align-items: center;
   justify-content: space-between;
   gap: 8px;
+}
+
+.node-parameter-field-inline-control {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 7px;
 }
 
 .node-parameter-field-title span {
@@ -1379,8 +1390,50 @@ button {
   align-items: center;
 }
 
-.param-field-row input {
-  width: auto;
+.param-field-checkbox-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.threefx-checkbox {
+  display: grid;
+  width: 18px;
+  height: 18px;
+  flex: 0 0 auto;
+  place-items: center;
+  border: 1px solid var(--input);
+  border-radius: 5px;
+  background: var(--background);
+  color: hsl(0 0% 100%);
+  padding: 0;
+  cursor: pointer;
+  transition:
+    border-color 120ms ease,
+    background 120ms ease,
+    box-shadow 120ms ease;
+}
+
+.threefx-checkbox:hover {
+  border-color: var(--ring);
+}
+
+.threefx-checkbox:focus-visible {
+  border-color: var(--ring);
+  box-shadow: 0 0 0 2px hsl(210 100% 60% / 0.22);
+  outline: none;
+}
+
+.threefx-checkbox[data-checked="true"] {
+  border-color: var(--selection-blue);
+  background: var(--selection-blue);
+  box-shadow: 0 0 10px hsl(210 100% 55% / 0.22);
+}
+
+.threefx-checkbox:disabled {
+  opacity: 0.48;
+  cursor: not-allowed;
 }
 
 .number-draft-input {
@@ -1620,10 +1673,6 @@ button {
   box-shadow: 0 24px 80px rgba(0, 0, 0, 0.54);
 }
 
-.preset-dialog {
-  width: min(760px, calc(100vw - 36px));
-}
-
 .shortcut-dialog-header,
 .preset-dialog-header {
   display: flex;
@@ -1651,7 +1700,7 @@ button {
 
 .preset-grid {
   display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
+  grid-template-columns: 1fr;
   gap: 8px;
   padding: 10px;
 }

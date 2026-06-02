@@ -27,7 +27,6 @@ export function normalizeWispySmokeParams(
     sourcePosition: params.sourcePosition ?? DEFAULT_WISPY_SMOKE_PARAMS.sourcePosition,
     sourceScale: params.sourceScale ?? DEFAULT_WISPY_SMOKE_PARAMS.sourceScale,
     sourceVelocity: params.sourceVelocity ?? DEFAULT_WISPY_SMOKE_PARAMS.sourceVelocity,
-    sourceGlowColor: params.sourceGlowColor ?? DEFAULT_WISPY_SMOKE_PARAMS.sourceGlowColor,
     gridResolution: params.gridResolution ?? DEFAULT_WISPY_SMOKE_PARAMS.gridResolution,
     lightDirection: params.lightDirection ?? DEFAULT_WISPY_SMOKE_PARAMS.lightDirection,
     obstaclePosition: params.obstaclePosition ?? DEFAULT_WISPY_SMOKE_PARAMS.obstaclePosition,
@@ -48,6 +47,15 @@ export function normalizeWispySmokeRuntimeConfig(
   return {
     ...base,
     ...config,
+    composite: {
+      ...base.composite,
+      ...(config?.composite ?? {}),
+      bloom: {
+        ...base.composite.bloom,
+        ...(config?.composite?.bloom ?? {}),
+      },
+      layers: config?.composite?.layers ?? base.composite.layers,
+    },
     debug: {
       ...base.debug,
       ...(config?.debug ?? {}),
@@ -63,10 +71,6 @@ export function normalizeWispySmokeRuntimeConfig(
     solver: {
       ...base.solver,
       ...(config?.solver ?? {}),
-    },
-    sourceGlow: {
-      ...base.sourceGlow,
-      ...(config?.sourceGlow ?? {}),
     },
     transform: {
       ...base.transform,

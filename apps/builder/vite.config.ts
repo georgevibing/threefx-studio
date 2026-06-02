@@ -3,6 +3,7 @@ import { fileURLToPath, URL } from "node:url";
 import { defineConfig } from "vite";
 
 export default defineConfig({
+  base: process.env.THREEFX_SITE_BASE ?? "/",
   plugins: [react()],
   resolve: {
     alias: {

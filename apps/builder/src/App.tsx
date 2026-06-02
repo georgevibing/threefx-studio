@@ -131,6 +131,7 @@ type FlowEdge = Edge;
 
 const FLOW_NODE_TYPES = { threefxNode: ThreeFXNode };
 const FLOW_PRO_OPTIONS = { hideAttribution: true };
+const BRAND_LOGO_URL = `${import.meta.env.BASE_URL}logo.png`;
 
 type FlowNodeMeasurement = {
   readonly height?: number;
@@ -2692,7 +2693,7 @@ function EditorLoadingShell() {
     <main className="app-shell" tabIndex={-1}>
       <header className="topbar">
         <div className="brand">
-          <img className="brand-logo" src="/logo.png" alt="" aria-hidden="true" />
+          <img className="brand-logo" src={BRAND_LOGO_URL} alt="" aria-hidden="true" />
           <div>
             <h1>ThreeFX Studio</h1>
           </div>
@@ -2734,7 +2735,7 @@ function TopBar({
   return (
     <header className="topbar">
       <div className="brand">
-        <img className="brand-logo" src="/logo.png" alt="" aria-hidden="true" />
+        <img className="brand-logo" src={BRAND_LOGO_URL} alt="" aria-hidden="true" />
         <div>
           <h1>ThreeFX Studio</h1>
         </div>

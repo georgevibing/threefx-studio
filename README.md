@@ -1,5 +1,7 @@
 # ThreeFX Studio
 
+**Live editor:** [Open ThreeFX Studio](https://georgevibing.github.io/threefx-studio/)
+
 ThreeFX Studio is a browser-based procedural VFX builder for Three.js projects targeting the WebGPU era. The goal is a clean web-first authoring workflow: edit a live effect graph, preview it in the browser, then export small typed TypeScript source files that can be dropped into another Three.js project.
 
 The current MVP is a vertical slice around one effect, `WispySmokeVFX`. It includes a typed node graph, node-local parameter editing, WebGPU-first live preview with compatibility fallback, graph JSON save/load, and TypeScript export.

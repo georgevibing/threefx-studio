@@ -851,6 +851,16 @@ function nodeCategoryToneStyle(category: NodeDefinitionGroup): React.CSSProperti
   return nodeKindToneStyle(category.definitions[0]?.kind ?? "any");
 }
 
+function nodeDefinitionPickerItemToneStyle(definition: NodeDefinition): React.CSSProperties {
+  const parameterType = getParameterNodeValueType(definition.type);
+  const tone = getPortTypeTone(parameterType ?? definition.kind);
+  return {
+    "--category-color": tone.accent,
+    "--category-background": tone.background,
+    "--category-border-color": tone.border,
+  } as React.CSSProperties;
+}
+
 function groupNodeDefinitions(
   definitions: readonly NodeDefinition[],
 ): readonly NodeDefinitionGroup[] {
@@ -4010,6 +4020,7 @@ function NodeDefinitionPicker({
                         type="button"
                         className="node-picker-item"
                         draggable={draggable}
+                        style={nodeDefinitionPickerItemToneStyle(entry)}
                         onDragStart={(event) => {
                           if (!draggable) {
                             return;

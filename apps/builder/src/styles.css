@@ -74,7 +74,7 @@ button {
 
 .app-shell {
   display: grid;
-  grid-template-rows: 56px 1fr;
+  grid-template-rows: 56px 1fr 24px;
   height: 100vh;
   width: 100vw;
   background: var(--background);
@@ -230,6 +230,31 @@ button {
   display: grid;
   min-height: 0;
   grid-template-columns: 50px minmax(460px, 1fr) 380px;
+}
+
+.editor-footer {
+  display: flex;
+  min-height: 24px;
+  min-width: 0;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  border-top: 1px solid var(--border);
+  background: var(--background);
+  color: var(--muted-foreground);
+  padding: 0 12px;
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.editor-footer a {
+  color: var(--foreground);
+  text-decoration: none;
+}
+
+.editor-footer a:hover {
+  text-decoration: underline;
 }
 
 .workspace-palette-expanded {
@@ -1271,6 +1296,14 @@ button {
   cursor: grabbing;
 }
 
+.preview-panel-transform-enabled canvas {
+  cursor: default;
+}
+
+.preview-panel-transform-enabled.preview-panel-navigating canvas {
+  cursor: grabbing;
+}
+
 .preview-controls {
   position: absolute;
   z-index: 2;
@@ -1288,6 +1321,13 @@ button {
 
 .preview-control-button:hover,
 .preview-panel-maximized .preview-control-button {
+  opacity: 1;
+}
+
+.preview-control-button[aria-pressed="true"] {
+  border-color: var(--ring);
+  background: var(--secondary);
+  color: var(--foreground);
   opacity: 1;
 }
 
@@ -1913,7 +1953,7 @@ button {
   }
 
   .app-shell {
-    grid-template-rows: auto 1fr;
+    grid-template-rows: auto 1fr auto;
     height: auto;
     min-height: 100vh;
   }

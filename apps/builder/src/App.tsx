@@ -33,6 +33,7 @@ import {
   Link2,
   Maximize2,
   Minimize2,
+  Move3d,
   PanelLeftClose,
   PanelLeftOpen,
   Plus,
@@ -48,6 +49,7 @@ import {
 } from "lucide-react";
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import * as THREE from "three";
+import { TransformControls } from "three/examples/jsm/controls/TransformControls.js";
 import {
   canConnectPorts,
   compileGraphToIR,
@@ -2690,6 +2692,7 @@ function App() {
           <ExportPanel compileResult={compileResult} />
         </aside>
       </section>
+      <EditorFooter />
       <ShortcutDialog
         isApple={isApple}
         open={isShortcutDialogOpen}
@@ -2721,7 +2724,29 @@ function EditorLoadingShell() {
         <span className="editor-loading-indicator" aria-hidden="true" />
         <span>Loading saved graph</span>
       </section>
+      <EditorFooter />
     </main>
+  );
+}
+
+function EditorFooter() {
+  return (
+    <footer className="editor-footer">
+      <span>
+        Developed by{" "}
+        <a href="https://x.com/georgevibing" target="_blank" rel="noreferrer">
+          @georgevibing
+        </a>
+      </span>
+      <span aria-hidden="true"> | </span>
+      <a
+        href="https://github.com/georgevibing/threefx-studio/blob/main/LICENSE"
+        target="_blank"
+        rel="noreferrer"
+      >
+        MIT License
+      </a>
+    </footer>
   );
 }
 
@@ -4957,6 +4982,7 @@ const CANVAS_FALLBACK_SMOKE_LAYERS = 28;
 const PREVIEW_BOUNDS_GIZMO_COLOR = "#4ade80";
 const PREVIEW_BOUNDS_GIZMO_OPACITY = 0.46;
 const PREVIEW_DENSITY_OUTFLOW_START = 0.6;
+const PREVIEW_TRANSFORM_GIZMO_SIZE = 0.78;
 
 type PreviewVolumeBounds = {
   readonly width: number;
@@ -4965,6 +4991,15 @@ type PreviewVolumeBounds = {
 };
 
 type PreviewBoundsGizmo = THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+
+function setObjectPositionFromRuntimeConfig(
+  object: THREE.Object3D,
+  config: WispySmokeRuntimeConfig,
+  offset?: THREE.Vector3,
+): void {
+  const [x, y, z] = config.transform.worldPosition;
+  object.position.set(x + (offset?.x ?? 0), y + (offset?.y ?? 0), z + (offset?.z ?? 0));
+}
 
 function resolvePreviewVolumeBounds(params: WispySmokeVFXParams): PreviewVolumeBounds {
   const windSpread = Math.hypot(params.wind[0], params.wind[2]) * params.lifetime * 0.24;
@@ -4983,7 +5018,10 @@ function previewBoundsGizmoPositions(bounds: PreviewVolumeBounds): Float32Array 
   const x = bounds.width * 0.5;
   const y = bounds.height;
   const z = bounds.depth * 0.5;
-  const cornerLength = Math.min(0.5, Math.max(0.12, Math.min(bounds.width, bounds.height, bounds.depth) * 0.16));
+  const cornerLength = Math.min(
+    0.5,
+    Math.max(0.12, Math.min(bounds.width, bounds.height, bounds.depth) * 0.16),
+  );
   const positions: number[] = [];
 
   for (const xSign of [-1, 1] as const) {
@@ -5019,7 +5057,10 @@ function previewBoundsGizmoPositions(bounds: PreviewVolumeBounds): Float32Array 
   return new Float32Array(positions);
 }
 
-function createPreviewBoundsGizmo(params: WispySmokeVFXParams, config: WispySmokeRuntimeConfig): PreviewBoundsGizmo {
+function createPreviewBoundsGizmo(
+  params: WispySmokeVFXParams,
+  config: WispySmokeRuntimeConfig,
+): PreviewBoundsGizmo {
   const geometry = new THREE.BufferGeometry();
   const material = new THREE.LineBasicMaterial({
     color: PREVIEW_BOUNDS_GIZMO_COLOR,
@@ -5041,6 +5082,7 @@ function updatePreviewBoundsGizmo(
   gizmo: PreviewBoundsGizmo | null,
   params: WispySmokeVFXParams,
   config: WispySmokeRuntimeConfig,
+  offset?: THREE.Vector3,
 ): void {
   if (!gizmo) {
     return;
@@ -5054,8 +5096,7 @@ function updatePreviewBoundsGizmo(
     "position",
     new THREE.BufferAttribute(previewBoundsGizmoPositions(bounds), 3),
   );
-  const [x, y, z] = config.transform.worldPosition;
-  gizmo.position.set(x, y, z);
+  setObjectPositionFromRuntimeConfig(gizmo, config, offset);
   gizmo.geometry.computeBoundingSphere();
 }
 
@@ -5604,15 +5645,83 @@ function PreviewViewport({
   const cameraDragRef = useRef<PreviewCameraDragState | null>(null);
   const boundsGizmoRef = useRef<PreviewBoundsGizmo | null>(null);
   const effectRef = useRef<WispySmokeVFX | null>(null);
+  const isTransformDraggingRef = useRef(false);
+  const isTransformGizmoEnabledRef = useRef(false);
   const paramsRef = useRef(params);
+  const previewTransformOffsetRef = useRef(new THREE.Vector3());
   const previewLabelRef = useRef("Starting preview");
   const previewStartMsRef = useRef(performance.now());
   const runtimeConfigRef = useRef(runtimeConfig);
   const rendererRef = useRef<PreviewRenderer | null>(null);
   const sceneRef = useRef<THREE.Scene | null>(null);
+  const transformControlsRef = useRef<TransformControls | null>(null);
+  const transformHelperRef = useRef<THREE.Object3D | null>(null);
   const [isMaximized, setIsMaximized] = useState(false);
   const [isNavigating, setIsNavigating] = useState(false);
+  const [isTransformGizmoEnabled, setIsTransformGizmoEnabled] = useState(false);
   const webgpu = useMemo(() => getWebGPUFeatureStatus(), []);
+
+  const applyPreviewTransformOffset = useCallback((effect: WispySmokeVFX): void => {
+    setObjectPositionFromRuntimeConfig(
+      effect.object3D,
+      runtimeConfigRef.current,
+      previewTransformOffsetRef.current,
+    );
+    boundsGizmoRef.current?.position.copy(effect.object3D.position);
+  }, []);
+
+  const syncPreviewTransformControls = useCallback((): void => {
+    const controls = transformControlsRef.current;
+    if (!controls) {
+      return;
+    }
+    const effect = effectRef.current;
+    const visible = isTransformGizmoEnabledRef.current && Boolean(effect);
+    controls.enabled = visible;
+    const helper = transformHelperRef.current;
+    if (helper) {
+      helper.visible = visible;
+    }
+    if (visible && effect) {
+      controls.attach(effect.object3D);
+      return;
+    }
+    controls.detach();
+  }, []);
+
+  const handlePreviewTransformObjectChange = useCallback((): void => {
+    const effect = effectRef.current;
+    if (!effect) {
+      return;
+    }
+    const [baseX, baseY, baseZ] = runtimeConfigRef.current.transform.worldPosition;
+    previewTransformOffsetRef.current.set(
+      effect.object3D.position.x - baseX,
+      effect.object3D.position.y - baseY,
+      effect.object3D.position.z - baseZ,
+    );
+    boundsGizmoRef.current?.position.copy(effect.object3D.position);
+  }, []);
+
+  const handlePreviewTransformDraggingChange = useCallback(
+    (event: { readonly value: unknown }): void => {
+      const dragging = event.value === true;
+      isTransformDraggingRef.current = dragging;
+      setIsNavigating(dragging);
+    },
+    [],
+  );
+
+  useEffect(() => {
+    isTransformGizmoEnabledRef.current = isTransformGizmoEnabled;
+    syncPreviewTransformControls();
+    if (!isTransformGizmoEnabled) {
+      isTransformDraggingRef.current = false;
+      if (!cameraDragRef.current) {
+        setIsNavigating(false);
+      }
+    }
+  }, [isTransformGizmoEnabled, syncPreviewTransformControls]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -5650,6 +5759,20 @@ function PreviewViewport({
       cameraRenderedStateRef.current = cameraRenderedState;
       syncPreviewCamera(camera, cameraRenderedState);
 
+      const transformControls = new TransformControls(camera, canvas);
+      transformControls.setMode("translate");
+      transformControls.setSpace("world");
+      transformControls.setSize(PREVIEW_TRANSFORM_GIZMO_SIZE);
+      transformControls.addEventListener("objectChange", handlePreviewTransformObjectChange);
+      transformControls.addEventListener("dragging-changed", handlePreviewTransformDraggingChange);
+      const transformHelper = transformControls.getHelper();
+      transformHelper.name = "ThreeFXPreviewTransformGizmo";
+      transformHelper.visible = false;
+      transformHelper.renderOrder = 100;
+      scene.add(transformHelper);
+      transformControlsRef.current = transformControls;
+      transformHelperRef.current = transformHelper;
+
       const grid = new THREE.GridHelper(5.5, 16, "#243244", "#151d2a");
       grid.position.y = -0.02;
       for (const material of Array.isArray(grid.material) ? grid.material : [grid.material]) {
@@ -5667,6 +5790,7 @@ function PreviewViewport({
       });
       scene.add(effect.object3D);
       effectRef.current = effect;
+      syncPreviewTransformControls();
       onTelemetry({
         ...EMPTY_PREVIEW_STATS,
         ...effect.getStats(),
@@ -5762,6 +5886,19 @@ function PreviewViewport({
       window.clearTimeout(startupFallback);
       cancelAnimationFrame(frame);
       observer?.disconnect();
+      const transformControls = transformControlsRef.current;
+      if (transformControls) {
+        transformControls.removeEventListener("objectChange", handlePreviewTransformObjectChange);
+        transformControls.removeEventListener(
+          "dragging-changed",
+          handlePreviewTransformDraggingChange,
+        );
+        transformControls.detach();
+      }
+      if (transformHelperRef.current) {
+        sceneRef.current?.remove(transformHelperRef.current);
+      }
+      transformControls?.dispose();
       effectRef.current?.dispose();
       if (boundsGizmoRef.current) {
         sceneRef.current?.remove(boundsGizmoRef.current);
@@ -5773,18 +5910,37 @@ function PreviewViewport({
       cameraRef.current = null;
       cameraDesiredStateRef.current = null;
       cameraRenderedStateRef.current = null;
+      isTransformDraggingRef.current = false;
+      previewTransformOffsetRef.current.set(0, 0, 0);
       rendererRef.current = null;
       effectRef.current = null;
       sceneRef.current = null;
+      transformControlsRef.current = null;
+      transformHelperRef.current = null;
     };
-  }, [onTelemetry, webgpu.supported]);
+  }, [
+    handlePreviewTransformDraggingChange,
+    handlePreviewTransformObjectChange,
+    onTelemetry,
+    syncPreviewTransformControls,
+    webgpu.supported,
+  ]);
 
   useEffect(() => {
     paramsRef.current = params;
     runtimeConfigRef.current = runtimeConfig;
-    effectRef.current?.setParamsAndRuntimeConfig(params, runtimeConfig);
-    updatePreviewBoundsGizmo(boundsGizmoRef.current, params, runtimeConfig);
-  }, [params, runtimeConfig]);
+    const effect = effectRef.current;
+    effect?.setParamsAndRuntimeConfig(params, runtimeConfig);
+    if (effect) {
+      applyPreviewTransformOffset(effect);
+    }
+    updatePreviewBoundsGizmo(
+      boundsGizmoRef.current,
+      params,
+      runtimeConfig,
+      previewTransformOffsetRef.current,
+    );
+  }, [applyPreviewTransformOffset, params, runtimeConfig]);
 
   const resetPreviewEffect = useCallback(() => {
     const scene = sceneRef.current;
@@ -5794,6 +5950,8 @@ function PreviewViewport({
     }
 
     const previousEffect = effectRef.current;
+    transformControlsRef.current?.detach();
+    previewTransformOffsetRef.current.set(0, 0, 0);
     if (previousEffect) {
       scene.remove(previousEffect.object3D);
       previousEffect.dispose();
@@ -5807,17 +5965,29 @@ function PreviewViewport({
     });
     scene.add(nextEffect.object3D);
     effectRef.current = nextEffect;
-    updatePreviewBoundsGizmo(boundsGizmoRef.current, paramsRef.current, runtimeConfigRef.current);
+    updatePreviewBoundsGizmo(
+      boundsGizmoRef.current,
+      paramsRef.current,
+      runtimeConfigRef.current,
+      previewTransformOffsetRef.current,
+    );
+    syncPreviewTransformControls();
     onTelemetry({
       ...EMPTY_PREVIEW_STATS,
       ...nextEffect.getStats(),
       webgpuLabel: previewLabelRef.current,
       webgpuSupported: webgpu.supported,
     });
-  }, [onTelemetry, webgpu.supported]);
+  }, [onTelemetry, syncPreviewTransformControls, webgpu.supported]);
 
   const endPreviewNavigation = useCallback((event?: React.PointerEvent<HTMLCanvasElement>) => {
     const drag = cameraDragRef.current;
+    if (!drag) {
+      if (!isTransformDraggingRef.current) {
+        setIsNavigating(false);
+      }
+      return;
+    }
     if (event && drag && drag.pointerId !== event.pointerId) {
       return;
     }
@@ -5831,11 +6001,19 @@ function PreviewViewport({
       }
     }
     cameraDragRef.current = null;
-    setIsNavigating(false);
+    if (!isTransformDraggingRef.current) {
+      setIsNavigating(false);
+    }
   }, []);
 
   const handlePreviewPointerDown = useCallback(
     (event: React.PointerEvent<HTMLCanvasElement>) => {
+      if (
+        isTransformDraggingRef.current ||
+        (isTransformGizmoEnabledRef.current && transformControlsRef.current?.axis)
+      ) {
+        return;
+      }
       const mode = getPreviewPointerNavigationMode(event, isApple);
       if (!mode) {
         return;
@@ -5860,6 +6038,9 @@ function PreviewViewport({
   );
 
   const handlePreviewPointerMove = useCallback((event: React.PointerEvent<HTMLCanvasElement>) => {
+    if (isTransformDraggingRef.current) {
+      return;
+    }
     const drag = cameraDragRef.current;
     const camera = cameraRef.current;
     const cameraState = cameraDesiredStateRef.current;
@@ -5934,9 +6115,20 @@ function PreviewViewport({
       <section
         className={`preview-panel ${isMaximized ? "preview-panel-maximized" : ""} ${
           isNavigating ? "preview-panel-navigating" : ""
-        }`}
+        } ${isTransformGizmoEnabled ? "preview-panel-transform-enabled" : ""}`}
       >
         <div className="preview-controls">
+          <button
+            type="button"
+            className="icon-button preview-control-button"
+            title={isTransformGizmoEnabled ? "Hide move gizmo" : "Move VFX"}
+            aria-label={isTransformGizmoEnabled ? "Hide move gizmo" : "Move VFX"}
+            aria-pressed={isTransformGizmoEnabled}
+            onPointerDown={(event) => event.stopPropagation()}
+            onClick={() => setIsTransformGizmoEnabled((current) => !current)}
+          >
+            <Move3d size={15} />
+          </button>
           <button
             type="button"
             className="icon-button preview-control-button"

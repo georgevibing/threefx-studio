@@ -4924,6 +4924,115 @@ const PREVIEW_WEBGPU_INIT_TIMEOUT_MS = 6000;
 const PREVIEW_WEBGPU_REQUIRED_STORAGE_BUFFERS_PER_STAGE = 9;
 const PREVIEW_WEBGPU_LIMIT_REQUEST_CAP = 16;
 const CANVAS_FALLBACK_SMOKE_LAYERS = 28;
+const PREVIEW_BOUNDS_GIZMO_COLOR = "#4ade80";
+const PREVIEW_BOUNDS_GIZMO_OPACITY = 0.46;
+const PREVIEW_DENSITY_OUTFLOW_START = 0.6;
+
+type PreviewVolumeBounds = {
+  readonly width: number;
+  readonly height: number;
+  readonly depth: number;
+};
+
+type PreviewBoundsGizmo = THREE.LineSegments<THREE.BufferGeometry, THREE.LineBasicMaterial>;
+
+function resolvePreviewVolumeBounds(params: WispySmokeVFXParams): PreviewVolumeBounds {
+  const windSpread = Math.hypot(params.wind[0], params.wind[2]) * params.lifetime * 0.24;
+  const sourceWidth = params.radius * 7 + windSpread;
+  const turbulenceSpread = params.turbulence * 0.06;
+  const authoredWidthHint = params.size * 0.1;
+  const width = Math.max(0.9, sourceWidth + turbulenceSpread + authoredWidthHint);
+  return {
+    depth: width,
+    height: Math.max(width * 1.7, params.height),
+    width,
+  };
+}
+
+function previewBoundsGizmoPositions(bounds: PreviewVolumeBounds): Float32Array {
+  const x = bounds.width * 0.5;
+  const y = bounds.height;
+  const z = bounds.depth * 0.5;
+  const cornerLength = Math.min(0.5, Math.max(0.12, Math.min(bounds.width, bounds.height, bounds.depth) * 0.16));
+  const positions: number[] = [];
+
+  for (const xSign of [-1, 1] as const) {
+    for (const ySign of [0, 1] as const) {
+      for (const zSign of [-1, 1] as const) {
+        const cornerX = x * xSign;
+        const cornerY = y * ySign;
+        const cornerZ = z * zSign;
+        positions.push(
+          cornerX,
+          cornerY,
+          cornerZ,
+          cornerX - xSign * cornerLength,
+          cornerY,
+          cornerZ,
+          cornerX,
+          cornerY,
+          cornerZ,
+          cornerX,
+          cornerY + (ySign === 0 ? cornerLength : -cornerLength),
+          cornerZ,
+          cornerX,
+          cornerY,
+          cornerZ,
+          cornerX,
+          cornerY,
+          cornerZ - zSign * cornerLength,
+        );
+      }
+    }
+  }
+
+  return new Float32Array(positions);
+}
+
+function createPreviewBoundsGizmo(params: WispySmokeVFXParams, config: WispySmokeRuntimeConfig): PreviewBoundsGizmo {
+  const geometry = new THREE.BufferGeometry();
+  const material = new THREE.LineBasicMaterial({
+    color: PREVIEW_BOUNDS_GIZMO_COLOR,
+    depthTest: false,
+    depthWrite: false,
+    opacity: PREVIEW_BOUNDS_GIZMO_OPACITY,
+    toneMapped: false,
+    transparent: true,
+  });
+  const gizmo = new THREE.LineSegments(geometry, material);
+  gizmo.name = "ThreeFXPreviewVolumeBoundsGizmo";
+  gizmo.frustumCulled = false;
+  gizmo.renderOrder = 90;
+  updatePreviewBoundsGizmo(gizmo, params, config);
+  return gizmo;
+}
+
+function updatePreviewBoundsGizmo(
+  gizmo: PreviewBoundsGizmo | null,
+  params: WispySmokeVFXParams,
+  config: WispySmokeRuntimeConfig,
+): void {
+  if (!gizmo) {
+    return;
+  }
+  const volumeBounds = resolvePreviewVolumeBounds(params);
+  const bounds = {
+    ...volumeBounds,
+    height: volumeBounds.height * PREVIEW_DENSITY_OUTFLOW_START,
+  };
+  gizmo.geometry.setAttribute(
+    "position",
+    new THREE.BufferAttribute(previewBoundsGizmoPositions(bounds), 3),
+  );
+  const [x, y, z] = config.transform.worldPosition;
+  gizmo.position.set(x, y, z);
+  gizmo.geometry.computeBoundingSphere();
+}
+
+function disposePreviewBoundsGizmo(gizmo: PreviewBoundsGizmo): void {
+  gizmo.geometry.dispose();
+  gizmo.material.dispose();
+}
 
 function configurePreviewRendererColor(renderer: PreviewRenderer): void {
   renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -5463,6 +5572,7 @@ function PreviewViewport({
   const cameraDesiredStateRef = useRef<PreviewCameraState | null>(null);
   const cameraRenderedStateRef = useRef<PreviewCameraState | null>(null);
   const cameraDragRef = useRef<PreviewCameraDragState | null>(null);
+  const boundsGizmoRef = useRef<PreviewBoundsGizmo | null>(null);
   const effectRef = useRef<WispySmokeVFX | null>(null);
   const paramsRef = useRef(params);
   const previewLabelRef = useRef("Starting preview");
@@ -5517,6 +5627,9 @@ function PreviewViewport({
         material.opacity = 0.18;
       }
       scene.add(grid);
+      const boundsGizmo = createPreviewBoundsGizmo(paramsRef.current, runtimeConfigRef.current);
+      boundsGizmoRef.current = boundsGizmo;
+      scene.add(boundsGizmo);
       const effect = new WispySmokeVFX({
         ...paramsRef.current,
         config: runtimeConfigRef.current,
@@ -5612,8 +5725,13 @@ function PreviewViewport({
       cancelAnimationFrame(frame);
       observer?.disconnect();
       effectRef.current?.dispose();
+      if (boundsGizmoRef.current) {
+        sceneRef.current?.remove(boundsGizmoRef.current);
+        disposePreviewBoundsGizmo(boundsGizmoRef.current);
+      }
       rendererRef.current?.dispose();
       cameraDragRef.current = null;
+      boundsGizmoRef.current = null;
       cameraRef.current = null;
       cameraDesiredStateRef.current = null;
       cameraRenderedStateRef.current = null;
@@ -5627,6 +5745,7 @@ function PreviewViewport({
     paramsRef.current = params;
     runtimeConfigRef.current = runtimeConfig;
     effectRef.current?.setParamsAndRuntimeConfig(params, runtimeConfig);
+    updatePreviewBoundsGizmo(boundsGizmoRef.current, params, runtimeConfig);
   }, [params, runtimeConfig]);
 
   const resetPreviewEffect = useCallback(() => {
@@ -5650,6 +5769,7 @@ function PreviewViewport({
     });
     scene.add(nextEffect.object3D);
     effectRef.current = nextEffect;
+    updatePreviewBoundsGizmo(boundsGizmoRef.current, paramsRef.current, runtimeConfigRef.current);
     onTelemetry({
       ...EMPTY_PREVIEW_STATS,
       ...nextEffect.getStats(),
